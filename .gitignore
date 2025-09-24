@@ -14,7 +14,7 @@ dist/
 
 # Python
 venv/
-.env/
+#.env/
 *.sqlite3
 
 # Django

@@ -16,7 +16,9 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
+from api.views import gemini_generate
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/gemini-test/', gemini_generate, name='gemini_test'),
 ]
