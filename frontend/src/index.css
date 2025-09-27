@@ -1,0 +1,17 @@
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Extras creativos */
+body {
+  @apply bg-gradient-to-br from-purple-100 via-indigo-100 to-blue-100;
+  font-family: 'Inter', sans-serif;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+

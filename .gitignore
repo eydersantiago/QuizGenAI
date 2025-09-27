@@ -1,0 +1,33 @@
+# General
+*.log
+*.env
+__pycache__/
+*.pyc
+*.pyo
+*.db
+.DS_Store
+
+# Node
+node_modules/
+build/
+dist/
+
+# Python
+venv/
+#.env/
+*.sqlite3
+
+# Django
+/static/
+/media/
+*.sqlite3
+
+# React
+frontend/build/
+
+# VSCode
+.vscode/
+
+# Others
+*.swp
+*.swo
