@@ -274,18 +274,53 @@ export default function QuizForm() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {Object.keys(counts).map((t) => (
           <div key={t} className="flex flex-col">
-            <span className="text-sm font-semibold mb-1">{t.toUpperCase()}</span>
+            {/* Etiqueta + ayuda */}
+            <div className="label-row">
+              <span className="text-sm font-semibold">{t.toUpperCase()}</span>
+
+              {/* Signo de admiración con tooltip */}
+              <span
+                className="hint"
+                role="button"
+                tabIndex={0}
+                aria-label={`¿Qué significa ${t.toUpperCase()}?`}
+              >
+                !
+                <span className="tooltip" role="tooltip">
+                  {t === "mcq" && (
+                    <>
+                      <b>MCQ</b>: Preguntas de opción múltiple. <br />
+                      Ingresa cuántas quieres (0–20).
+                    </>
+                  )}
+                  {t === "vf" && (
+                    <>
+                      <b>VF</b>: Verdadero/Falso. <br />
+                      Ingresa cuántas quieres (0–20).
+                    </>
+                  )}
+                  {t === "short" && (
+                    <>
+                      <b>SHORT</b>: Respuesta corta (texto breve). <br />
+                      Ingresa cuántas quieres (0–20).
+                    </>
+                  )}
+                </span>
+              </span>
+            </div>
+
             <input
               type="number"
               min="0"
               max="20"
               value={counts[t]}
               onChange={(e) => handleCountChange(t, e.target.value)}
-              className="border-2 border-indigo-200 rounded-xl text-center p-1 focus:ring-2 focus:ring-indigo-500"
+              className="border-2 border-indigo-200 rounded-xl text-center p-3 focus:ring-2 focus:ring-indigo-500"
             />
           </div>
         ))}
       </div>
+
 
       {/* Botones */}
       <div className="flex flex-col sm:flex-row gap-4">
