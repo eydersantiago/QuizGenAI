@@ -154,6 +154,8 @@
 .btn.btn-indigo:hover { background: #4338ca; box-shadow: 0 14px 28px rgba(0,0,0,0.22); }
 .btn.btn-green { background: #16a34a; }
 .btn.btn-green:hover { background: #15803d; box-shadow: 0 14px 28px rgba(0,0,0,0.22); }
+.btn.btn-marron { background: #806d5f; }
+.btn.btn-marron:hover { background: #806d5f; box-shadow: 0 14px 28px rgba(0,0,0,0.22); }
 
 /* lists */
 .list-disc { list-style-type: disc; }
