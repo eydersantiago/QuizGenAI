@@ -3,9 +3,97 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from dotenv import load_dotenv
 import google.generativeai as genai
+import json, re
+
 
 load_dotenv()
 
+
+
+def _extract_json(raw: str) -> dict:
+    raw = (raw or "").strip()
+    if not raw:
+        raise ValueError("Respuesta vacía de Gemini")
+
+    # Quita code fences ```json ... ```
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.S).strip()
+
+    # Si aún trae texto, intenta quedarte con el primer bloque { ... }
+    if not raw.lstrip().startswith("{"):
+        m = re.search(r"\{.*\}", raw, flags=re.S)
+        if not m:
+            raise ValueError("No se encontró JSON en la respuesta")
+        raw = m.group(0)
+
+    return json.loads(raw)
+
+def generate_questions_with_gemini(topic, difficulty, types, counts):
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+    genai.configure(api_key=api_key)
+
+    total = sum(int(counts.get(t, 0)) for t in types)
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["type", "question", "answer"],
+                    "properties": {
+                        "type": {"type": "string", "enum": ["mcq","vf","short"]},
+                        "question": {"type": "string"},
+                        "options": {"type": "array", "items": {"type": "string"}},
+                        "answer": {"type": "string"},
+                        "explanation": {"type": "string"}
+                    }
+                }
+            }
+        },
+        "required": ["questions"]
+    }
+
+    prompt = f"""
+Genera exactamente {total} preguntas sobre "{topic}" en nivel {difficulty}.
+Distribución por tipo (counts): {json.dumps(counts, ensure_ascii=False)}.
+
+Reglas:
+- mcq: 4 opciones, answer ∈ {{A,B,C,D}}.
+- vf: answer ∈ {{Verdadero,Falso}}.
+- short: answer = texto corto.
+- explanation ≤ 40 palabras.
+Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
+"""
+
+    model = genai.GenerativeModel(
+        "gemini-2.0-flash",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=schema,  # valida el schema en salida
+        )
+    )
+
+    resp = model.generate_content(prompt)
+
+    raw = (resp.text or "").strip()
+    data = json.loads(raw)  # ahora sí debería ser JSON puro
+
+    if "questions" not in data or not isinstance(data["questions"], list):
+        raise ValueError("Respuesta sin 'questions' válido")
+
+    # (Opcional) relaja la igualdad exacta para no fallar si el modelo devuelve demás:
+    expected = total
+    got = len(data["questions"])
+    if got < expected:
+        raise ValueError(f"Se esperaban {expected} preguntas y llegaron {got}")
+    if got > expected:
+        data["questions"] = data["questions"][:expected]
+
+    return data["questions"]
 @api_view(['POST'])
 def gemini_generate(request):
 	prompt = request.data.get('prompt', '')
@@ -29,10 +117,41 @@ from .models import GenerationSession
 
 # Allowed taxonomy (from backlog)
 ALLOWED_TAXONOMY = [
-    "algoritmos", "redes", "bd", "bases de datos", "sistemas operativos", "so",
-    "poo", "programación orientada a objetos", "ciberseguridad", "ia básica",
-    "arquitectura de computadores", "arquitectura"
+    "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
+    "teoría de la computación", "autómatas y gramáticas", "compiladores", "intérpretes",
+    "lenguajes de programación", "sistemas de tipos", "verificación formal", "model checking",
+    "programación orientada a objetos", "patrones de diseño", "programación funcional",
+    "metodologías ágiles", "scrum", "kanban", "devops", "sre", "observabilidad",
+    "logging", "monitoring", "tracing", "apm", "optimización de rendimiento", "profiling",
+    "cachés", "cdn", "sistemas operativos", "gestión de memoria", "concurrencia",
+    "paralelismo", "hilos", "procesos", "bloqueos y semáforos", "sistemas distribuidos",
+    "consenso", "microservicios", "arquitectura hexagonal", "ddd", "event sourcing",
+    "mensajería asíncrona", "kafka", "rabbitmq", "mqtt", "rest", "graphql", "grpc",
+    "redes de computadores", "tcp/ip", "enrutamiento", "dns", "http/2", "http/3", "quic",
+    "seguridad informática", "owasp", "criptografía", "pki", "ssl/tls", "iam",
+    "seguridad en redes", "seguridad web", "pentesting", "forense digital",
+    "bases de datos", "modelado relacional", "normalización", "transacciones",
+    "aislamiento y concurrencia", "sql", "pl/sql", "postgresql", "mysql", "sqlite",
+    "mariadb", "nosql", "mongodb", "redis", "elasticsearch", "data warehousing",
+    "etl", "elt", "data lakes", "big data", "hadoop", "spark", "procesamiento en stream",
+    "procesamiento batch", "ingeniería de datos", "mlops", "machine learning",
+    "deep learning", "nlp", "computer vision", "reinforcement learning",
+    "transformers", "embeddings", "llms", "prompt engineering", "evaluación de llms",
+    "edge ai", "federated learning", "differential privacy", "autoML", "explicabilidad (xai)",
+    "estadística", "probabilidad", "álgebra lineal", "cálculo", "matemática discreta",
+    "optimización", "investigación de operaciones", "series de tiempo",
+    "arquitectura de software", "requisitos de software", "uml", "pruebas unitarias",
+    "pruebas de integración", "tdd", "ci/cd", "contenedores", "docker", "kubernetes",
+    "serverless", "nubes públicas", "aws", "azure", "gcp", "iac (terraform)", "ansible",
+    "backend", "frontend", "fullstack", "html", "css", "javascript",
+    "typescript", "react", "next.js", "vue", "angular", "svelte", "node.js", "deno",
+    "python", "java", "c", "c++", "c#", "go", "rust", "php", "ruby", "swift", "kotlin", "r",
+    "matlab", "apis", "sockets", "iot", "sistemas embebidos", "esp32", "arduino", "robótica",
+    "gráficos por computador", "opengl", "unity", "unreal", "ar/vr", "hci", "accesibilidad",
+    "ux/ui", "bioinformática", "gis", "fintech", "e-commerce", "blockchain",
+    "contratos inteligentes", "zk-proofs", "escalado blockchain", "privacidad", "etica en ia"
 ]
+
 
 MAX_TOTAL_QUESTIONS = 20
 MAX_PER_TYPE = 20
@@ -116,14 +235,14 @@ def create_session(request):
 @api_view(['POST'])
 def preview_questions(request):
     """
-    Returns a preview list of questions (dummy if no Generative API configured).
-    Expects: session_id OR same payload as create_session (topic,difficulty,types,counts)
+    Si hay GEMINI_API_KEY y todo sale bien: source='gemini'.
+    Si falla: source='placeholder'. Con ?debug=1 verás por qué.
     """
     data = request.data
-    # Either get session or use payload to create a temporary preview
     session_id = data.get('session_id')
     session = None
     if session_id:
+        from .models import GenerationSession
         try:
             session = GenerationSession.objects.get(id=session_id)
         except GenerationSession.DoesNotExist:
@@ -135,15 +254,34 @@ def preview_questions(request):
         types = session.types
         counts = session.counts
     else:
-        # reuse validation from create_session? For brevity we accept payload here
         topic = data.get('topic','Tema de ejemplo')
         difficulty = data.get('difficulty','Fácil')
         types = data.get('types',['mcq','vf'])
         counts = data.get('counts', {t:1 for t in types})
 
-    # If GEMINI_API_KEY present, you may call your gemini_generate function
-    # Fallback: create placeholder questions
-    api_key = os.getenv('GEMINI_API_KEY')
+    # normaliza duplicados
+    types = list(dict.fromkeys(types))
+    debug = request.GET.get('debug') == '1'
+
+    # intenta Gemini
+    gemini_error = None
+    try:
+        if os.getenv('GEMINI_API_KEY'):
+            generated = generate_questions_with_gemini(topic, difficulty, types, counts)
+            resp = {'preview': generated, 'source': 'gemini'}
+            if debug:
+                resp['debug'] = {
+                    'env_key_present': True,
+                    'topic': topic, 'difficulty': difficulty,
+                    'types': types, 'counts': counts
+                }
+            return JsonResponse(resp, status=200)
+        else:
+            gemini_error = "GEMINI_API_KEY not set"
+    except Exception as e:
+        gemini_error = str(e)
+
+    # fallback
     preview = []
     for t in types:
         n = int(counts.get(t,0))
@@ -154,7 +292,7 @@ def preview_questions(request):
                     'question': f'[{topic}] Pregunta MCQ {i} ({difficulty}) — enunciado ejemplo',
                     'options': ['A) ...','B) ...','C) ...','D) ...'],
                     'answer': 'A',
-                    'explanation': 'Explicación breve <=40 palabras.'
+                    'explanation': 'Explicación breve ≤40 palabras.'
                 })
             elif t == 'vf':
                 preview.append({
@@ -169,4 +307,18 @@ def preview_questions(request):
                     'question': f'[{topic}] Pregunta corta {i} ({difficulty}) — enunciado ejemplo',
                     'answer': 'Respuesta esperada (criterio de corrección).'
                 })
-    return JsonResponse({'preview': preview}, status=200)
+
+    resp = {'preview': preview, 'source': 'placeholder'}
+    if debug:
+        resp['debug'] = {
+            'env_key_present': bool(os.getenv('GEMINI_API_KEY')),
+            'gemini_error': gemini_error,
+            'topic': topic, 'difficulty': difficulty,
+            'types': types, 'counts': counts
+        }
+    return JsonResponse(resp, status=200)
+
+
+
+
+
