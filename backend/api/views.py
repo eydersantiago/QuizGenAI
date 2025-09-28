@@ -1,41 +1,56 @@
+# api/views.py
 import os
+import json
+import re
+import uuid
+from dotenv import load_dotenv
 from django.http import JsonResponse
 from rest_framework.decorators import api_view
-from dotenv import load_dotenv
-import google.generativeai as genai
-import json, re
+from rest_framework import status
 
+import google.generativeai as genai
+from .models import GenerationSession, RegenerationLog
 
 load_dotenv()
 
-
+# -------------------- Utilidades --------------------
 
 def _extract_json(raw: str) -> dict:
     raw = (raw or "").strip()
     if not raw:
         raise ValueError("Respuesta vacía de Gemini")
-
-    # Quita code fences ```json ... ```
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.S).strip()
-
-    # Si aún trae texto, intenta quedarte con el primer bloque { ... }
     if not raw.lstrip().startswith("{"):
         m = re.search(r"\{.*\}", raw, flags=re.S)
         if not m:
             raise ValueError("No se encontró JSON en la respuesta")
         raw = m.group(0)
-
     return json.loads(raw)
 
-def generate_questions_with_gemini(topic, difficulty, types, counts):
+
+def _configure_gemini():
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not set")
     genai.configure(api_key=api_key)
 
-    total = sum(int(counts.get(t, 0)) for t in types)
 
+def _normalize_difficulty(diff: str) -> str:
+    d = (diff or "").strip().lower()
+    if d.startswith("f"):
+        return "Fácil"
+    if d.startswith("m"):
+        return "Media"
+    return "Difícil"
+
+
+# -------------------- Gemini prompts --------------------
+
+def generate_questions_with_gemini(topic, difficulty, types, counts):
+    _configure_gemini()
+
+    total = sum(int(counts.get(t, 0)) for t in types)
     schema = {
         "type": "object",
         "properties": {
@@ -73,19 +88,16 @@ Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
         "gemini-2.0-flash",
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
-            response_schema=schema,  # valida el schema en salida
+            response_schema=schema,
         )
     )
-
     resp = model.generate_content(prompt)
-
     raw = (resp.text or "").strip()
-    data = json.loads(raw)  # ahora sí debería ser JSON puro
+    data = json.loads(raw)
 
     if "questions" not in data or not isinstance(data["questions"], list):
         raise ValueError("Respuesta sin 'questions' válido")
 
-    # (Opcional) relaja la igualdad exacta para no fallar si el modelo devuelve demás:
     expected = total
     got = len(data["questions"])
     if got < expected:
@@ -94,28 +106,87 @@ Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
         data["questions"] = data["questions"][:expected]
 
     return data["questions"]
-@api_view(['POST'])
-def gemini_generate(request):
-	prompt = request.data.get('prompt', '')
-	api_key = os.getenv('GEMINI_API_KEY')
-	if not api_key:
-		return JsonResponse({'error': 'API key not configured'}, status=500)
-	genai.configure(api_key=api_key)
-	try:
-		model = genai.GenerativeModel('gemini-2.0-flash')
-		response = model.generate_content(prompt)
-		return JsonResponse({'result': response.text})
-	except Exception as e:
-		return JsonResponse({'error': str(e)}, status=500)
 
-import os
-from django.http import JsonResponse
-from rest_framework.decorators import api_view
-from rest_framework import status
-import uuid
-from .models import GenerationSession
+def regenerate_question_with_gemini(topic, difficulty, qtype, base_question=None):
+    _configure_gemini()
 
-# Allowed taxonomy (from backlog)
+    schema = {
+        "type": "object",
+        "required": ["type", "question", "answer"],
+        "properties": {
+            "type": {"type": "string", "enum": ["mcq","vf","short"]},
+            "question": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}},
+            "answer": {"type": "string"},
+            "explanation": {"type": "string"}
+        }
+    }
+
+    if qtype not in ("mcq", "vf", "short"):
+        qtype = "mcq"
+
+    seed_clause = ""
+    if base_question:
+        seed_txt = json.dumps({
+            "type": base_question.get("type"),
+            "question": base_question.get("question"),
+            "options": base_question.get("options"),
+            "answer": base_question.get("answer"),
+        }, ensure_ascii=False)
+        seed_clause = (
+            "Toma como referencia conceptual la pregunta base, pero **prohíbe** reutilizar el mismo enunciado, "
+            "ejemplos, números o nombres concretos. Cambia el foco o los datos para crear una variante clara. "
+            "No repitas frases ni listas tal cual.\n"
+            f"Pregunta base:\n{seed_txt}\n"
+        )
+
+    rules = """
+Reglas:
+- Mantén el mismo tema y dificultad.
+- Si type=mcq: 4 opciones nuevas (no reutilizar el mismo texto de la base), "answer" ∈ {A,B,C,D}.
+- Si type=vf: genera un enunciado nuevo (no negación trivial del anterior), "answer" ∈ {"Verdadero","Falso"}.
+- Si type=short: responde con solución esperada breve (texto), y máx. 40 palabras en "explanation" si la incluyes.
+- Devuelve SOLO JSON válido al schema. No incluyas texto extra.
+"""
+
+    prompt = f"""
+Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
+{seed_clause}
+{rules}
+"""
+
+    model = genai.GenerativeModel(
+        "gemini-2.0-flash",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=schema,
+        )
+    )
+    resp = model.generate_content(prompt)
+    raw = (resp.text or "").strip()
+    data = json.loads(raw)
+
+    # Normalizaciones mínimas…
+    if data.get("type") != qtype:
+        data["type"] = qtype
+    if qtype == "mcq":
+        opts = data.get("options", [])
+        if not isinstance(opts, list) or len(opts) != 4:
+            data["options"] = ["A) Opción 1", "B) Opción 2", "C) Opción 3", "D) Opción 4"]
+            data["answer"] = "A"
+        else:
+            ans = str(data.get("answer","A")).strip().upper()[:1]
+            if ans not in ("A","B","C","D"):
+                data["answer"] = "A"
+    if qtype == "vf":
+        ans = str(data.get("answer","")).strip().capitalize()
+        if ans not in ("Verdadero","Falso"):
+            data["answer"] = "Verdadero"
+
+    return data
+
+# -------------------- Taxonomía y validación --------------------
+
 ALLOWED_TAXONOMY = [
     "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
     "teoría de la computación", "autómatas y gramáticas", "compiladores", "intérpretes",
@@ -152,12 +223,11 @@ ALLOWED_TAXONOMY = [
     "contratos inteligentes", "zk-proofs", "escalado blockchain", "privacidad", "etica en ia"
 ]
 
-
 MAX_TOTAL_QUESTIONS = 20
 MAX_PER_TYPE = 20
 
 def normalize_topic(t):
-    return t.strip().lower()
+    return (t or "").strip().lower()
 
 def find_category_for_topic(topic):
     t = normalize_topic(topic)
@@ -166,15 +236,17 @@ def find_category_for_topic(topic):
             return cat
     return None
 
+
+# -------------------- Endpoints --------------------
+
 @api_view(['POST'])
-def create_session(request):
+def sessions(request):
     data = request.data
     topic = data.get('topic', '')
-    difficulty = data.get('difficulty', '')
-    types = data.get('types', [])  # expected list e.g. ["mcq","vf"]
-    counts = data.get('counts', {}) # expected dict e.g. {"mcq":5,...}
+    difficulty = _normalize_difficulty(data.get('difficulty', ''))
+    types = data.get('types', [])  # ["mcq","vf"]
+    counts = data.get('counts', {})
 
-    # Validation
     if not topic:
         return JsonResponse({'error':'topic required'}, status=400)
     cat = find_category_for_topic(topic)
@@ -183,33 +255,17 @@ def create_session(request):
             'error':'topic fuera de dominio. Temas permitidos: ' + ', '.join(ALLOWED_TAXONOMY)
         }, status=400)
 
-    if difficulty not in ['Fácil','Media','Difícil', 'Facil', 'Media', 'Dificil']:
-        return JsonResponse({'error':'difficulty must be Fácil/Media/Difícil'}, status=400)
-
-    # Normalize difficulty spelling
-    if difficulty.lower().startswith('f'):
-        difficulty = 'Fácil'
-    elif difficulty.lower().startswith('m'):
-        difficulty = 'Media'
-    else:
-        difficulty = 'Difícil'
-
-    # Validate types
     valid_types = {'mcq','vf','short'}
     if not types:
-        # default mix: at least two types
         types = ['mcq','vf']
-
     for t in types:
         if t not in valid_types:
             return JsonResponse({'error':f'type {t} not allowed'}, status=400)
 
-    # Validate counts
     total = 0
     for t in types:
-        c = counts.get(t, 0)
         try:
-            c = int(c)
+            c = int(counts.get(t, 0))
         except:
             return JsonResponse({'error':f'count for {t} must be integer'}, status=400)
         if c < 0 or c > MAX_PER_TYPE:
@@ -221,7 +277,6 @@ def create_session(request):
     if total > MAX_TOTAL_QUESTIONS:
         return JsonResponse({'error': f'total questions ({total}) exceed max {MAX_TOTAL_QUESTIONS}'}, status=400)
 
-    # Create session
     session = GenerationSession.objects.create(
         topic=topic,
         category=cat,
@@ -235,14 +290,14 @@ def create_session(request):
 @api_view(['POST'])
 def preview_questions(request):
     """
-    Si hay GEMINI_API_KEY y todo sale bien: source='gemini'.
-    Si falla: source='placeholder'. Con ?debug=1 verás por qué.
+    POST /api/preview/?debug=1
+    body: { session_id? , topic?, difficulty?, types?, counts? }
+    - Si session_id existe, usa la configuración guardada y PERSISTE latest_preview en DB.
     """
     data = request.data
-    session_id = data.get('session_id')
     session = None
+    session_id = data.get('session_id')
     if session_id:
-        from .models import GenerationSession
         try:
             session = GenerationSession.objects.get(id=session_id)
         except GenerationSession.DoesNotExist:
@@ -255,19 +310,21 @@ def preview_questions(request):
         counts = session.counts
     else:
         topic = data.get('topic','Tema de ejemplo')
-        difficulty = data.get('difficulty','Fácil')
+        difficulty = _normalize_difficulty(data.get('difficulty','Fácil'))
         types = data.get('types',['mcq','vf'])
         counts = data.get('counts', {t:1 for t in types})
 
-    # normaliza duplicados
     types = list(dict.fromkeys(types))
     debug = request.GET.get('debug') == '1'
 
-    # intenta Gemini
     gemini_error = None
     try:
         if os.getenv('GEMINI_API_KEY'):
             generated = generate_questions_with_gemini(topic, difficulty, types, counts)
+            # Si hay sesión, persistimos latest_preview
+            if session:
+                session.latest_preview = generated
+                session.save(update_fields=["latest_preview"])
             resp = {'preview': generated, 'source': 'gemini'}
             if debug:
                 resp['debug'] = {
@@ -308,6 +365,10 @@ def preview_questions(request):
                     'answer': 'Respuesta esperada (criterio de corrección).'
                 })
 
+    if session:
+        session.latest_preview = preview
+        session.save(update_fields=["latest_preview"])
+
     resp = {'preview': preview, 'source': 'placeholder'}
     if debug:
         resp['debug'] = {
@@ -319,6 +380,162 @@ def preview_questions(request):
     return JsonResponse(resp, status=200)
 
 
+@api_view(['POST'])
+def regenerate_question(request):
+    """
+    POST /api/regenerate/?debug=1
+    body: { session_id: str, index: int, type?: "mcq"|"vf"|"short" }
+
+    Usa session.latest_preview[index] como base (si existe) y genera una variante.
+    Guarda un registro en RegenerationLog con la vieja y la nueva versión.
+    Devuelve SOLO la nueva pregunta (para colocarla como borrador en el frontend).
+    """
+    data = request.data
+    debug = request.GET.get('debug') == '1'
+
+    # Validaciones básicas
+    session_id = data.get("session_id")
+    if not session_id:
+        return JsonResponse({"error": "session_id requerido"}, status=400)
+    try:
+        session = GenerationSession.objects.get(id=session_id)
+    except GenerationSession.DoesNotExist:
+        return JsonResponse({"error": "session not found"}, status=404)
+
+    try:
+        index = int(data.get("index", -1))
+    except Exception:
+        return JsonResponse({"error": "index inválido"}, status=400)
+    if index < 0:
+        return JsonResponse({"error": "index debe ser >= 0"}, status=400)
+
+    qtype = data.get("type")
+    # Si no envían type, intentamos inferirlo del preview guardado
+    base_q = None
+    if isinstance(session.latest_preview, list) and 0 <= index < len(session.latest_preview):
+        base_q = session.latest_preview[index]
+        qtype = qtype or base_q.get("type")
+
+    qtype = qtype or "mcq"
+    topic = session.topic
+    difficulty = session.difficulty
+
+    gemini_error = None
+    try:
+        if os.getenv("GEMINI_API_KEY"):
+            new_q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q)
+        else:
+            gemini_error = "GEMINI_API_KEY not set"
+            raise RuntimeError(gemini_error)
+    except Exception as e:
+        gemini_error = gemini_error or str(e)
+        import random, uuid as _uuid
+        uid = str(_uuid.uuid4())[:8]
+
+        if qtype == "mcq":
+            new_q = {
+                "type": "mcq",
+                "question": f"[{topic}] Variante ({difficulty}) — caso {uid}: Selecciona la opción correcta sobre {topic}.",
+                "options": [
+                    "A) Definición correcta (caso nuevo).",
+                    "B) Distractor plausible 1.",
+                    "C) Distractor plausible 2.",
+                    "D) Distractor plausible 3."
+                ],
+                "answer": random.choice(["A","B","C","D"]),
+                "explanation": "Variante generada localmente para desarrollo."
+            }
+        elif qtype == "vf":
+            stmt = f"En {topic}, todo algoritmo recursivo es siempre más eficiente que su versión iterativa. ({uid})"
+            new_q = {
+                "type": "vf",
+                "question": stmt,
+                "answer": random.choice(["Verdadero","Falso"]),
+                "explanation": "Variante local; reemplaza con Gemini en producción."
+            }
+        else:
+            new_q = {
+                "type": "short",
+                "question": f"[{topic}] Explica brevemente el concepto clave (variante {uid}).",
+                "answer": "Respuesta esperada breve.",
+                "explanation": "Variante local."
+            }
+
+
+    # Registra historial
+    try:
+        RegenerationLog.objects.create(
+            session=session,
+            index=index,
+            old_question=base_q or {},
+            new_question=new_q
+        )
+    except Exception:
+        # no bloquea la respuesta si fallara guardar log
+        pass
+
+    # NO reemplazamos en DB automáticamente: el reemplazo final lo decide el cliente.
+    # Pero opcionalmente puedes mantener una "draft buffer" por índice si quieres.
+    resp = {"question": new_q, "source": "gemini" if not gemini_error else "placeholder"}
+    if debug:
+        resp["debug"] = {
+            "env_key_present": bool(os.getenv("GEMINI_API_KEY")),
+            "gemini_error": gemini_error,
+            "topic": topic, "difficulty": difficulty, "type": qtype,
+            "base_available": base_q is not None
+        }
+    return JsonResponse(resp, status=200)
+
+
+@api_view(['POST'])
+def confirm_replace(request):
+    """
+    POST /api/confirm-replace/
+    body: { session_id: str, index: int, question: {...} }
+    Actualiza session.latest_preview[index] = question
+    """
+    data = request.data
+    session_id = data.get("session_id")
+    try:
+        session = GenerationSession.objects.get(id=session_id)
+    except Exception:
+        return JsonResponse({"error":"session not found"}, status=404)
+
+    try:
+        index = int(data.get("index", -1))
+    except Exception:
+        return JsonResponse({"error":"index inválido"}, status=400)
+    if index < 0:
+        return JsonResponse({"error":"index debe ser >= 0"}, status=400)
+
+    new_q = data.get("question")
+    if not isinstance(new_q, dict) or "type" not in new_q or "question" not in new_q or "answer" not in new_q:
+        return JsonResponse({"error":"question inválida o incompleta"}, status=400)
+
+    lp = list(session.latest_preview or [])
+    # Si el index se sale, expandimos con vacíos:
+    while len(lp) <= index:
+        lp.append({})
+    lp[index] = new_q
+    session.latest_preview = lp
+    session.save(update_fields=["latest_preview"])
+
+    return JsonResponse({"ok": True})
 
 
 
+# -------------------- Prueba libre (opcional) --------------------
+
+@api_view(['POST'])
+def gemini_generate(request):
+    prompt = request.data.get('prompt', '')
+    try:
+        _configure_gemini()
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(prompt)
+        return JsonResponse({'result': response.text})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
