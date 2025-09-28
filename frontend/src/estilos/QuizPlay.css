@@ -1,0 +1,229 @@
+/* ===========================
+   QuizPlay – estilos de página
+   Compatible con App.css (glass) y utilidades de QuizForm.css
+   =========================== */
+
+/* Raíz de la página de juego */
+.qp-root {
+  position: relative;
+  z-index: 3;
+}
+
+/* Encabezado */
+.qp-header {
+  text-align: center;
+  color: #e9ecff;
+  margin-bottom: 12px;
+}
+.qp-header h1 {
+  margin: 0 0 6px;
+  font-size: clamp(24px, 4.5vw, 36px);
+  color: #ffffff;
+  text-shadow: 0 6px 26px rgba(124,77,255,0.35);
+}
+.qp-header p {
+  margin: 0 auto;
+  max-width: 70ch;
+  color: #d5dbff;
+  opacity: .92;
+}
+
+/* Aviso de warning (fallback gemini) */
+.qp-warning {
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.45);
+  color: #7a5b00;
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin: 10px auto 0;
+  max-width: 900px;
+}
+@supports (backdrop-filter: blur(8px)) {
+  .qp-warning { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+}
+
+/* Contenedor del quiz dentro de .card */
+.qp-body {
+  display: grid;
+  gap: 14px;
+}
+
+/* Tarjeta de pregunta (reusa .preview-card pero refinamos) */
+.qp-question {
+  background: rgba(238,242,255,0.75);
+  border: 1px solid rgba(129,140,248,0.35);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.10);
+  transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+}
+.qp-question:hover { box-shadow: 0 16px 28px rgba(0,0,0,0.16); }
+.qp-question .qp-title {
+  font-weight: 700;
+  color: #1f2340;
+  margin-bottom: 10px;
+}
+
+/* Opciones (MCQ y VF) */
+.qp-options { display: grid; gap: 8px; }
+.qp-option {
+  display: flex; align-items: center; gap: 10px;
+  border: 2px solid #d1d5db;
+  background: rgba(255,255,255,0.82);
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: background .2s ease, border-color .2s ease, transform .04s ease;
+  user-select: none;
+}
+.qp-option.is-selected {
+  background: #eef2ff;
+  border-color: #818cf8;
+}
+.qp-option:active { transform: translateY(1px); }
+
+/* Badge de letra en MCQ (A, B, C, D) */
+.qp-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 28px; height: 28px; padding: 0 6px;
+  font-weight: 800; font-size: 12px;
+  color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe;
+  border-radius: 999px;
+}
+
+/* Textarea para short answer */
+.qp-short {
+  width: 100%;
+  min-height: 90px;
+  border: 2px solid #c7d2fe;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  background: rgba(255,255,255,0.9);
+  transition: box-shadow .2s ease, border-color .2s ease, background .2s ease;
+}
+.qp-short:focus {
+  outline: none;
+  background: rgba(255,255,255,0.98);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.35);
+}
+
+/* Panel de solución (post-submit) */
+.qp-solution {
+  margin-top: 10px;
+  border-top: 1px dashed rgba(99,102,241,0.35);
+  padding-top: 10px;
+}
+.qp-solution .qp-expected {
+  color: #15803d; /* green-700 */
+  font-size: 0.95rem;
+}
+.qp-solution .qp-expl {
+  color: #6b7280; /* gray-500 */
+  font-size: 0.8rem;
+}
+
+/* Acciones al pie */
+.qp-actions {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  margin-top: 16px;
+}
+.qp-actions .btn { min-width: 140px; }
+
+/* Resultado */
+.qp-score {
+  text-align: center;
+  margin-top: 10px;
+  font-weight: 700;
+  color: #1f2340;
+}
+
+/* Loading y error */
+.qp-loading, .qp-error {
+  text-align: center;
+  padding: 24px 16px;
+}
+.qp-error {
+  color: #b91c1c;
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: 12px;
+}
+
+/* Progreso simple (si agregas uno más adelante) */
+.qp-progress {
+  height: 8px; width: 100%;
+  background: rgba(255,255,255,0.45);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.qp-progress__bar {
+  height: 100%;
+  width: var(--qp-progress, 0%);
+  background: linear-gradient(90deg, #7c4dff, #00e5ff);
+  transition: width .3s ease;
+}
+
+/* Responsivo */
+@media (max-width: 640px) {
+  .qp-actions { flex-direction: column; }
+  .qp-actions .btn { width: 100%; }
+  .qp-question { padding: 14px; }
+}
+
+/* Modo reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  .qp-question, .qp-option { transition: none; }
+}
+
+/* Enfoques accesibles */
+.qp-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.35);
+}
+
+/* Empuja el texto para que el radio quede a la derecha */
+.qp-text { flex: 1; }
+
+/* Radio custom a la derecha */
+.qp-radio {
+  margin-left: auto;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #a5b4fc;        /* indigo-300 */
+  border-radius: 50%;
+  background: transparent;
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+  transition: border-color .15s ease;
+}
+
+/* Punto interior cuando está seleccionado */
+.qp-radio::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #4f46e5;               /* indigo-600 */
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform .15s ease;
+}
+
+/* Sin enfoque del navegador, usamos nuestro ring */
+.qp-radio:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.35);
+}
+
+/* Estados al seleccionar (controlados por la clase del contenedor) */
+.qp-option.is-selected .qp-radio {
+  border-color: #4f46e5;             /* indigo-600 */
+}
+.qp-option.is-selected .qp-radio::after {
+  transform: translate(-50%, -50%) scale(1);
+}
+
