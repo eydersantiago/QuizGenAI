@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "../estilos/AdminMetrics.css";
 
-const API_BASE = import.meta?.env?.VITE_API_BASE || "http://localhost:8000/api";
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
 function HBar({ label, value, max }) {
   const width = max > 0 ? Math.round((value / max) * 100) : 0;

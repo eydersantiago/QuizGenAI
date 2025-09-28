@@ -3,12 +3,14 @@ import "./App.css";
 import QuizForm from "./components/QuizForm";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
+import SavedQuizzes from "./components/SavedQuizzes";
 
 function App() {
   const location = useLocation();
   const isPlay = location.pathname.startsWith("/quiz/");
   const isMetrics = location.pathname.startsWith("/admin/");
-  const hideHomeChrome = isPlay || isMetrics; // ← unificamos
+  const isSavedQuizzes = location.pathname === "/saved-quizzes";
+  const hideHomeChrome = isPlay || isMetrics || isSavedQuizzes; // ← unificamos
 
   return (
     <div className="App">
@@ -37,6 +39,7 @@ function App() {
         ) : (
           <Routes>
             <Route path="/quiz/:sessionId" element={<QuizPlay />} />
+            <Route path="/saved-quizzes" element={<SavedQuizzes />} />
             <Route path="/admin/metrics" element={<AdminMetrics />} />
           </Routes>
         )}

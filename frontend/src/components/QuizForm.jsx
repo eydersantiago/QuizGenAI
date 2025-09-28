@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Eye, PlusCircle, CheckCircle } from "lucide-react";
+import { Eye, PlusCircle, CheckCircle, BookOpen } from "lucide-react";
 import Swal from "sweetalert2";
 import "../estilos/QuizForm.css";
 
@@ -44,7 +44,7 @@ const TAXONOMY = [
 
 /** Utilidad para normalizar (tildes/case) */
 const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
-const API_BASE = import.meta?.env?.VITE_API_BASE || "http://localhost:8000/api";
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
 
 
@@ -169,9 +169,72 @@ export default function QuizForm() {
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
   const [preview, setPreview] = useState(null);
+  const [lastSaved, setLastSaved] = useState(null);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const MAX_TOTAL = 20;
+
+  // Clave para localStorage
+  const AUTOSAVE_KEY = "quizform_autosave";
+
+  // Cargar datos guardados al montar el componente
+  useEffect(() => {
+    const savedData = localStorage.getItem(AUTOSAVE_KEY);
+    if (savedData) {
+      try {
+        const parsed = JSON.parse(savedData);
+        if (parsed.topic) setTopic(parsed.topic);
+        if (parsed.difficulty) setDifficulty(parsed.difficulty);
+        if (parsed.types) setTypes(parsed.types);
+        if (parsed.counts) setCounts(parsed.counts);
+        if (parsed.timestamp) {
+          setLastSaved(new Date(parsed.timestamp));
+        }
+      } catch (error) {
+        console.error("Error al cargar datos guardados:", error);
+        localStorage.removeItem(AUTOSAVE_KEY);
+      }
+    }
+  }, []);
+
+  // Función para guardar automáticamente
+  const autoSave = useCallback(() => {
+    setIsAutoSaving(true);
+    const dataToSave = {
+      topic,
+      difficulty,
+      types,
+      counts,
+      timestamp: new Date().toISOString()
+    };
+    
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(dataToSave));
+    setLastSaved(new Date());
+    
+    // Simular un pequeño delay para mostrar el indicador
+    setTimeout(() => {
+      setIsAutoSaving(false);
+    }, 500);
+  }, [topic, difficulty, types, counts]);
+
+  // Auto-guardar cuando cambian los datos (con debounce)
+  useEffect(() => {
+    // Solo auto-guardar si hay datos significativos
+    if (topic.trim() || Object.values(types).some(Boolean)) {
+      const timeoutId = setTimeout(() => {
+        autoSave();
+      }, 1000); // Esperar 1 segundo después del último cambio
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [topic, difficulty, types, counts, autoSave]);
+
+  // Función para limpiar datos guardados
+  const clearSavedData = useCallback(() => {
+    localStorage.removeItem(AUTOSAVE_KEY);
+    setLastSaved(null);
+  }, []);
 
   function toggleType(t) {
     setTypes((prev) => ({ ...prev, [t]: !prev[t] }));
@@ -248,6 +311,8 @@ export default function QuizForm() {
         timerProgressBar: true,
       });
 
+      // Limpiar datos guardados después del éxito
+      clearSavedData();
       navigate(`/quiz/${sessionId}`);
     } catch (err) {
       Swal.fire("Error", String(err), "error");
@@ -290,6 +355,8 @@ export default function QuizForm() {
         timerProgressBar: true,
       });
 
+      // Limpiar datos guardados después del éxito
+      clearSavedData();
       // Aquí puedes redirigir o actualizar el estado si lo necesitas
       navigate(`/admin/metrics`);
     } catch (err) {
@@ -309,6 +376,27 @@ export default function QuizForm() {
       <h2 className="text-3xl font-extrabold text-indigo-700 text-center mb-6">
         🎯 Genera tu Quiz Inteligente
       </h2>
+
+      {/* Indicador de guardado automático */}
+      <div className="autosave-indicator mb-4">
+        {isAutoSaving ? (
+          <div className="flex items-center justify-center gap-2 text-blue-600">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"
+            />
+            <span className="text-sm">Guardando...</span>
+          </div>
+        ) : lastSaved ? (
+          <div className="flex items-center justify-center gap-2 text-green-600">
+            <CheckCircle size={16} />
+            <span className="text-sm">
+              Guardado automáticamente a las {lastSaved.toLocaleTimeString()}
+            </span>
+          </div>
+        ) : null}
+      </div>
 
       {/* Tema (Autocomplete) */}
       <label className="block font-bold text-black-700 mb-1">Tema</label>
@@ -424,6 +512,55 @@ export default function QuizForm() {
         >
           <CheckCircle size={20} />
           {creating ? "Creando..." : "Obtener Métricas"}
+        </button>
+      </div>
+
+      {/* Botón para limpiar formulario */}
+      {lastSaved && (
+        <div className="mt-4 text-center">
+          <button
+            onClick={() => {
+              // Confirmar antes de limpiar
+              Swal.fire({
+                title: "¿Limpiar formulario?",
+                text: "Se perderán los datos guardados automáticamente",
+                icon: "question",
+                showCancelButton: true,
+                confirmButtonText: "Sí, limpiar",
+                cancelButtonText: "Cancelar",
+                confirmButtonColor: "#dc2626"
+              }).then((result) => {
+                if (result.isConfirmed) {
+                  // Resetear estados
+                  setTopic("");
+                  setDifficulty("Fácil");
+                  setTypes({ mcq: true, vf: true, short: false });
+                  setCounts({ mcq: 5, vf: 3, short: 0 });
+                  setPreview(null);
+                  clearSavedData();
+                  Swal.fire("Limpiado", "El formulario ha sido limpiado", "success");
+                }
+              });
+            }}
+            className="btn-text text-red-600 hover:text-red-700 text-sm"
+          >
+            🗑️ Limpiar formulario guardado
+          </button>
+        </div>
+      )}
+
+      {/* Separador visual */}
+      <div className="my-8 border-t border-gray-300 opacity-30"></div>
+
+      {/* Enlace a cuestionarios guardados */}
+      <div className="mt-8 text-center">
+        <p className="text-sm text-gray-600 mb-3">¿Quieres continuar un quiz anterior?</p>
+        <button
+          onClick={() => navigate('/saved-quizzes')}
+          className="btn btn-green-outline"
+        >
+          <BookOpen size={20} />
+          Ver Mis Cuestionarios Guardados
         </button>
       </div>
 

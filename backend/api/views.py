@@ -7,11 +7,25 @@ from dotenv import load_dotenv
 from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from rest_framework import status
+from django.utils import timezone
 
 import google.generativeai as genai
 from .models import GenerationSession, RegenerationLog
 
 load_dotenv()
+
+# =========================================================
+# Endpoint de salud para diagnóstico
+# =========================================================
+
+@api_view(['GET'])
+def health_check(request):
+    """Endpoint simple para verificar que el backend está funcionando"""
+    return JsonResponse({
+        'status': 'ok',
+        'message': 'Backend funcionando correctamente',
+        'timestamp': timezone.now().isoformat()
+    })
 
 # =========================================================
 # Utilidades generales

@@ -55,3 +55,57 @@ class RegenerationLog(models.Model):
 
     def __str__(self):
         return f"regen[{self.session_id}] idx={self.index} at {self.created_at}"
+
+
+class SavedQuiz(models.Model):
+    """
+    Cuestionarios guardados por el usuario para continuar más tarde.
+    Almacena el estado completo del cuestionario y su configuración.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200, help_text="Título personalizado del cuestionario guardado")
+    topic = models.CharField(max_length=200)
+    category = models.CharField(max_length=100, blank=True)
+    difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
+    
+    # Configuración original
+    types = models.JSONField(default=list, help_text="Tipos de pregunta habilitados")
+    counts = models.JSONField(default=dict, help_text="Cantidad por tipo de pregunta")
+    
+    # Estado del cuestionario
+    questions = JSONField(default=list, help_text="Preguntas generadas del cuestionario")
+    user_answers = JSONField(default=dict, help_text="Respuestas del usuario {index: respuesta}")
+    current_question = models.PositiveIntegerField(default=0, help_text="Índice de la pregunta actual")
+    is_completed = models.BooleanField(default=False, help_text="Si el cuestionario fue completado")
+    score = models.JSONField(default=dict, blank=True, help_text="Puntaje y detalles de evaluación")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_accessed = models.DateTimeField(auto_now=True, help_text="Última vez que se accedió al cuestionario")
+
+    class Meta:
+        db_table = "saved_quiz"
+        ordering = ['-last_accessed', '-updated_at']
+        indexes = [
+            models.Index(fields=['topic', 'difficulty']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['last_accessed']),
+            models.Index(fields=['is_completed']),
+        ]
+
+    def __str__(self):
+        status = "Completado" if self.is_completed else f"Pregunta {self.current_question + 1}/{len(self.questions)}"
+        return f"{self.title} - {self.topic} ({self.difficulty}) - {status}"
+
+    def get_progress_percentage(self):
+        """Retorna el porcentaje de progreso del cuestionario"""
+        if not self.questions:
+            return 0
+        if self.is_completed:
+            return 100
+        return int((self.current_question / len(self.questions)) * 100)
+
+    def get_answered_count(self):
+        """Retorna la cantidad de preguntas respondidas"""
+        return len(self.user_answers) if isinstance(self.user_answers, dict) else 0

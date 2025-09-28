@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 
     # apps externas
     'rest_framework',
+    'corsheaders',  # Agregado corsheaders
 
     # tu app
     'api',
@@ -133,3 +134,43 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# =========================================================
+# Configuración CORS
+# =========================================================
+
+# Permitir CORS desde el frontend durante desarrollo
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# Métodos HTTP permitidos
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# Headers permitidos
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# Permitir credenciales si es necesario
+CORS_ALLOW_CREDENTIALS = True
+
+# Para desarrollo, permitir todos los orígenes (opcional - menos seguro)
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
