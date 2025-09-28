@@ -1,8 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Eye, PlusCircle, CheckCircle } from "lucide-react";
 import Swal from "sweetalert2";
 import "../estilos/QuizForm.css";
+
 
 const TAXONOMY = [
   "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
@@ -42,6 +44,9 @@ const TAXONOMY = [
 
 /** Utilidad para normalizar (tildes/case) */
 const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
+const API_BASE = import.meta?.env?.VITE_API_BASE || "http://localhost:8000/api";
+
+
 
 /** AutocompleteSelect: select con buscador */
 function AutocompleteSelect({ value, onChange, options, placeholder }) {
@@ -164,6 +169,8 @@ export default function QuizForm() {
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
   const [preview, setPreview] = useState(null);
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
   const MAX_TOTAL = 20;
 
   function toggleType(t) {
@@ -199,7 +206,7 @@ export default function QuizForm() {
   async function handlePreview() {
     if (!validate()) return;
     const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
-    const res = await fetch("/api/preview/", {
+    const res = await fetch(`${API_BASE}/preview/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -211,16 +218,44 @@ export default function QuizForm() {
 
   async function handleCreate() {
     if (!validate()) return;
-    const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
-    const res = await fetch("/api/sessions/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json();
-    if (res.ok) Swal.fire("Sesión creada", `ID: ${json.session_id}`, "success");
-    else Swal.fire("Error", json.error, "error");
+    try {
+      setCreating(true);
+      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
+      const res = await fetch(`${API_BASE}/sessions/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      // intenta parsear JSON incluso en error
+      let json = {};
+      try { json = await res.json(); } catch (_) {}
+
+      if (!res.ok) {
+        Swal.fire("Error", json?.error || "No se pudo crear la sesión", "error");
+        return;
+      }
+
+      const sessionId = json.session_id;
+
+      // Pop de éxito y luego redirigir
+      await Swal.fire({
+        title: "Sesión creada",
+        text: `ID: ${sessionId}`,
+        icon: "success",
+        confirmButtonText: "Ir al quiz",
+        timer: 1800,
+        timerProgressBar: true,
+      });
+
+      navigate(`/quiz/${sessionId}`);
+    } catch (err) {
+      Swal.fire("Error", String(err), "error");
+    } finally {
+      setCreating(false);
+    }
   }
+
 
   return (
     <motion.div
@@ -333,8 +368,11 @@ export default function QuizForm() {
         <button
           onClick={handleCreate}
           className="btn btn-green"
+          disabled={creating}
+          aria-busy={creating}
         >
-          <PlusCircle size={20} /> Crear Sesión
+          <PlusCircle size={20} />
+          {creating ? "Creando..." : "Crear Sesión"}
         </button>
       </div>
 
@@ -349,7 +387,7 @@ export default function QuizForm() {
                 className="preview-card"
                 whileHover={{ scale: 1.02 }}
               >
-                <div className="font-semibold">{q.question}</div>
+                <div className="font-semibold_2">{q.question}</div>
                 {q.options && (
                   <ul className="list-disc ml-5 text-gray-700">
                     {q.options.map((o, idx) => (

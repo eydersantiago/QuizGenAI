@@ -1,15 +1,16 @@
+import { Routes, Route } from "react-router-dom";
 import "./App.css";
 import QuizForm from "./components/QuizForm";
+import QuizPlay from "./pages/QuizPlay";
 
 function App() {
   return (
     <div className="App">
-      {/* Capas del fondo animado */}
+      {/* Fondo dinámico */}
       <div className="bg-layer gradient" />
       <div className="bg-layer blobs" />
       <div className="bg-noise" />
 
-      {/* Contenido con efecto glass */}
       <main className="shell">
         <header className="hero">
           <h1>QuizGenAI</h1>
@@ -17,7 +18,11 @@ function App() {
         </header>
 
         <section className="card">
-          <QuizForm />
+          {/* NO pongas BrowserRouter aquí */}
+          <Routes>
+            <Route path="/" element={<QuizForm />} />
+            <Route path="/quiz/:sessionId" element={<QuizPlay />} />
+          </Routes>
         </section>
 
         <footer className="footer">
