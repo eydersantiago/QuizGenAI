@@ -256,6 +256,48 @@ export default function QuizForm() {
     }
   }
 
+  async function handleGetMetrics() {
+    if (!validate()) return;
+    try {
+      setCreating(true);
+      // Construir query string con los parámetros necesarios
+      const params = new URLSearchParams({
+        topic,
+        difficulty,
+        types: Object.keys(types).filter((k) => types[k]).join(","),
+        counts: JSON.stringify(counts),
+      }).toString();
+
+      const res = await fetch(`${API_BASE}/metrics/?${params}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      let json = {};
+      try { json = await res.json(); } catch (_) {}
+
+      if (!res.ok) {
+        Swal.fire("Error", json?.error || "No se pudo crear las métricas", "error");
+        return;
+      }
+
+      await Swal.fire({
+        title: "Métricas creadas",
+        text: "Las métricas se han generado correctamente.",
+        icon: "success",
+        confirmButtonText: "OK",
+        timer: 1800,
+        timerProgressBar: true,
+      });
+
+      // Aquí puedes redirigir o actualizar el estado si lo necesitas
+      navigate(`/admin/metrics`);
+    } catch (err) {
+      Swal.fire("Error", String(err), "error");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   return (
     <motion.div
@@ -373,6 +415,15 @@ export default function QuizForm() {
         >
           <PlusCircle size={20} />
           {creating ? "Creando..." : "Crear Sesión"}
+        </button>
+        <button
+          onClick={handleGetMetrics}
+          className="btn btn-marron"
+          disabled={creating}
+          aria-busy={creating}
+        >
+          <CheckCircle size={20} />
+          {creating ? "Creando..." : "Obtener Métricas"}
         </button>
       </div>
 
