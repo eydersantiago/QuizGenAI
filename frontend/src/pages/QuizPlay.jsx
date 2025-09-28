@@ -392,8 +392,11 @@ export default function QuizPlay() {
         </div>
 
         <div className="qp-actions">
-          {!submitted ? (
-            <button className="btn btn-green" onClick={submitQuiz}>Calificar</button>
+          {!submitted ? (           
+            <>
+              <button className="btn btn-green" onClick={submitQuiz}>Calificar</button>
+              <button className="btn btn-indigo" onClick={() => navigate("/")}>Volver al inicio</button>
+            </>
           ) : (
             <>
               <button className="btn btn-indigo" onClick={resetQuiz}>Reintentar</button>

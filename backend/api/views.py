@@ -13,7 +13,9 @@ from .models import GenerationSession, RegenerationLog
 
 load_dotenv()
 
-# -------------------- Utilidades --------------------
+# =========================================================
+# Utilidades generales
+# =========================================================
 
 def _extract_json(raw: str) -> dict:
     raw = (raw or "").strip()
@@ -45,13 +47,127 @@ def _normalize_difficulty(diff: str) -> str:
     return "Difícil"
 
 
-# -------------------- Gemini prompts --------------------
+# =========================================================
+# Moderación / Calidad (HU-08 simple)
+# =========================================================
 
-def generate_questions_with_gemini(topic, difficulty, types, counts):
-    _configure_gemini()
+BAD_WORDS = {
+    "idiota","estúpido","imbécil","tarado","mierda","maldito","pendejo","marica","negro de ****",
+}
+STEREOTYPE_PATTERNS = [
+    r"\blas\s+mujeres\s+son\b",
+    r"\blos\s+hombres\s+son\b",
+    r"\blos\s+\w+\s+son\b",
+]
+AMBIG_MARKERS = [
+    "etc.", "etc", "...", "depende", "generalmente", "a veces", "comúnmente",
+    "de manera subjetiva", "podría ser cualquiera", "no hay respuesta correcta",
+]
+SUBJECTIVE_MARKERS = ["mejor", "peor", "más bonito", "más feo"]
 
-    total = sum(int(counts.get(t, 0)) for t in types)
-    schema = {
+def _norm_txt(s: str) -> str:
+    return (s or "").strip().lower()
+
+def _has_offense_or_stereotype(text: str) -> bool:
+    t = _norm_txt(text)
+    if any(bw in t for bw in BAD_WORDS):
+        return True
+    return any(re.search(pat, t) for pat in STEREOTYPE_PATTERNS)
+
+def _is_ambiguous(text: str) -> bool:
+    t = _norm_txt(text)
+    return any(marker in t for marker in AMBIG_MARKERS)
+
+def _is_too_subjective(text: str) -> bool:
+    t = _norm_txt(text)
+    return any(w in t for w in SUBJECTIVE_MARKERS)
+
+def _mcq_has_issues(options) -> bool:
+    if not isinstance(options, list) or len(options) != 4:
+        return True
+    cleaned = [(_norm_txt(o) or "") for o in options]
+    if any(not c for c in cleaned):
+        return True
+    if len(set(cleaned)) < 4:
+        return True
+    return False
+
+def review_question(q: dict) -> list:
+    """
+    Devuelve lista de issues: 
+    ["offensive_or_stereotype","ambiguous","subjective","mcq_invalid","vf_invalid","too_long"]
+    Si lista vacía => OK.
+    """
+    issues = []
+    qtype = (q.get("type") or "").lower()
+    question = q.get("question") or ""
+
+    if _has_offense_or_stereotype(question):
+        issues.append("offensive_or_stereotype")
+    if _is_ambiguous(question):
+        issues.append("ambiguous")
+    if _is_too_subjective(question):
+        issues.append("subjective")
+
+    if qtype == "mcq":
+        if _mcq_has_issues(q.get("options")):
+            issues.append("mcq_invalid")
+        ans = str(q.get("answer","")).strip().upper()[:1]
+        if ans not in ("A","B","C","D"):
+            issues.append("mcq_invalid")
+
+    if qtype == "vf":
+        ans = str(q.get("answer","")).strip().capitalize()
+        if ans not in ("Verdadero","Falso"):
+            issues.append("vf_invalid")
+
+    if len(question) > 300:
+        issues.append("too_long")
+
+    return issues
+
+def moderation_severity(issues: list) -> str:
+    """'severe' si hay ofensa/estereotipo; 'minor' para el resto; '' si vacío."""
+    if not issues:
+        return ""
+    if "offensive_or_stereotype" in issues:
+        return "severe"
+    return "minor"
+
+
+# =========================================================
+# Anti-repetición (diversidad)
+# =========================================================
+
+def _norm_for_cmp(s: str) -> str:
+    return re.sub(r"[\W_]+", " ", (s or "").lower()).strip()
+
+def build_seen_set(session: GenerationSession, index: int = None) -> set:
+    seen = set()
+    if isinstance(session.latest_preview, list):
+        for q in session.latest_preview:
+            if isinstance(q, dict):
+                seen.add(_norm_for_cmp(q.get("question", "")))
+    try:
+        logs = session.regens.all().order_by("-id")[:50]
+        for lg in logs:
+            if index is None or lg.index == index:
+                seen.add(_norm_for_cmp((lg.old_question or {}).get("question", "")))
+                seen.add(_norm_for_cmp((lg.new_question or {}).get("question", "")))
+    except Exception:
+        pass
+    return {s for s in seen if s}
+
+
+# =========================================================
+# Gemini prompts (modelo y helpers)
+# =========================================================
+
+# Modelo con free tier generoso y buen rendimiento.
+GEMINI_MODEL = "gemini-2.5-flash"
+
+def _json_schema_questions():
+    return {
         "type": "object",
         "properties": {
             "questions": {
@@ -72,12 +188,35 @@ def generate_questions_with_gemini(topic, difficulty, types, counts):
         "required": ["questions"]
     }
 
+def _json_schema_one():
+    return {
+        "type": "object",
+        "required": ["type", "question", "answer"],
+        "properties": {
+            "type": {"type": "string", "enum": ["mcq","vf","short"]},
+            "question": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}},
+            "answer": {"type": "string"},
+            "explanation": {"type": "string"}
+        }
+    }
+
+def generate_questions_with_gemini(topic, difficulty, types, counts):
+    _configure_gemini()
+
+    total = sum(int(counts.get(t, 0)) for t in types)
+    schema = _json_schema_questions()
+
     prompt = f"""
 Genera exactamente {total} preguntas sobre "{topic}" en nivel {difficulty}.
 Distribución por tipo (counts): {json.dumps(counts, ensure_ascii=False)}.
 
-Reglas:
-- mcq: 4 opciones, answer ∈ {{A,B,C,D}}.
+Política de calidad (OBLIGATORIA):
+- Sin sesgos ni estereotipos (no generalizaciones sobre grupos).
+- Sin lenguaje ofensivo.
+- Evita ambigüedades: no uses “etc.”, “…”, “depende”, “generalmente”.
+- Enunciados claros, objetivos y específicos para informática/sistemas.
+- mcq: 4 opciones distintas, answer ∈ {{A,B,C,D}}.
 - vf: answer ∈ {{Verdadero,Falso}}.
 - short: answer = texto corto.
 - explanation ≤ 40 palabras.
@@ -85,10 +224,13 @@ Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
 """
 
     model = genai.GenerativeModel(
-        "gemini-2.0-flash",
+        GEMINI_MODEL,
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
             response_schema=schema,
+            temperature=0.9,   # ↑ diversidad
+            top_p=0.95,
+            top_k=64,
         )
     )
     resp = model.generate_content(prompt)
@@ -107,21 +249,15 @@ Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
 
     return data["questions"]
 
-def regenerate_question_with_gemini(topic, difficulty, qtype, base_question=None):
+
+def regenerate_question_with_gemini(topic, difficulty, qtype, base_question=None, avoid_phrases=None):
+    """
+    Genera UNA variante, manteniendo tema/dificultad/tipo.
+    - avoid_phrases: set/list de enunciados normalizados a evitar (anti-repetición).
+    """
     _configure_gemini()
 
-    schema = {
-        "type": "object",
-        "required": ["type", "question", "answer"],
-        "properties": {
-            "type": {"type": "string", "enum": ["mcq","vf","short"]},
-            "question": {"type": "string"},
-            "options": {"type": "array", "items": {"type": "string"}},
-            "answer": {"type": "string"},
-            "explanation": {"type": "string"}
-        }
-    }
-
+    schema = _json_schema_one()
     if qtype not in ("mcq", "vf", "short"):
         qtype = "mcq"
 
@@ -140,33 +276,45 @@ def regenerate_question_with_gemini(topic, difficulty, qtype, base_question=None
             f"Pregunta base:\n{seed_txt}\n"
         )
 
+    avoid_txt = ""
+    if avoid_phrases:
+        bullets = "\n".join(f"- {p}" for p in list(avoid_phrases)[:8])
+        avoid_txt = f"Evita formular enunciados similares a los siguientes:\n{bullets}\n"
+
     rules = """
-Reglas:
+Reglas de calidad:
 - Mantén el mismo tema y dificultad.
-- Si type=mcq: 4 opciones nuevas (no reutilizar el mismo texto de la base), "answer" ∈ {A,B,C,D}.
-- Si type=vf: genera un enunciado nuevo (no negación trivial del anterior), "answer" ∈ {"Verdadero","Falso"}.
-- Si type=short: responde con solución esperada breve (texto), y máx. 40 palabras en "explanation" si la incluyes.
-- Devuelve SOLO JSON válido al schema. No incluyas texto extra.
+- Prohibido reutilizar el mismo enunciado/datos de la base (cambia foco o valores).
+- Sin sesgos/estereotipos, sin lenguaje ofensivo.
+- Evita ambigüedades: no uses “etc.”, “…”, “depende”, “generalmente”.
+- type=mcq: 4 opciones nuevas y distintas; "answer" ∈ {A,B,C,D}.
+- type=vf: enunciado nuevo (no negación trivial); "answer" ∈ {"Verdadero","Falso"}.
+- type=short: solución breve; "explanation" ≤ 40 palabras.
+- Responde SOLO con JSON válido al schema.
 """
 
     prompt = f"""
 Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
 {seed_clause}
+{avoid_txt}
 {rules}
 """
 
     model = genai.GenerativeModel(
-        "gemini-2.0-flash",
+        GEMINI_MODEL,
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
             response_schema=schema,
+            temperature=0.95,  # todavía más diversidad para variantes
+            top_p=0.95,
+            top_k=64,
         )
     )
     resp = model.generate_content(prompt)
     raw = (resp.text or "").strip()
     data = json.loads(raw)
 
-    # Normalizaciones mínimas…
+    # Normalizaciones mínimas
     if data.get("type") != qtype:
         data["type"] = qtype
     if qtype == "mcq":
@@ -185,7 +333,10 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
 
     return data
 
-# -------------------- Taxonomía y validación --------------------
+
+# =========================================================
+# Taxonomía / Dominio (HU-06)
+# =========================================================
 
 ALLOWED_TAXONOMY = [
     "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
@@ -237,7 +388,9 @@ def find_category_for_topic(topic):
     return None
 
 
-# -------------------- Endpoints --------------------
+# =========================================================
+# Endpoints
+# =========================================================
 
 @api_view(['POST'])
 def sessions(request):
@@ -321,16 +474,78 @@ def preview_questions(request):
     try:
         if os.getenv('GEMINI_API_KEY'):
             generated = generate_questions_with_gemini(topic, difficulty, types, counts)
-            # Si hay sesión, persistimos latest_preview
+
+            # HU-08 moderación (suave) + anti-repetición en una misma hornada
+            clean = []
+            moderation = {"flagged": 0, "details": []}
+            seen = set()  # enunciados aceptados en este batch
+
+            for i, q in enumerate(generated):
+                issues = review_question(q)
+                sev = moderation_severity(issues)
+
+                # anti-dup inmediato
+                is_dup = _norm_for_cmp(q.get("question","")) in seen
+
+                if not issues and not is_dup:
+                    clean.append(q)
+                    seen.add(_norm_for_cmp(q.get("question","")))
+                    continue
+
+                moderation["flagged"] += 1
+                moderation["details"].append({"index": i, "issues": issues, "severity": sev, "dup": is_dup})
+
+                if sev == "severe":
+                    # reintento obligatorio
+                    try:
+                        fixed = regenerate_question_with_gemini(topic, difficulty, q.get("type","mcq"), q, avoid_phrases=seen)
+                        if moderation_severity(review_question(fixed)) != "severe":
+                            clean.append(fixed)
+                            seen.add(_norm_for_cmp(fixed.get("question","")))
+                        else:
+                            # fallback seguro
+                            clean.append({
+                                "type": q.get("type","mcq"),
+                                "question": f"[{topic}] Pregunta ajustada por moderación — describe el concepto con claridad.",
+                                "options": ["A) Definición correcta","B) Distractor 1","C) Distractor 2","D) Distractor 3"] if q.get("type")=="mcq" else None,
+                                "answer": "A" if q.get("type")=="mcq" else ("Verdadero" if q.get("type")=="vf" else "Respuesta breve"),
+                                "explanation": "Ajuste automático por reglas de calidad (HU-08)."
+                            })
+                    except Exception:
+                        clean.append({
+                            "type": q.get("type","mcq"),
+                            "question": f"[{topic}] Pregunta ajustada por moderación — redacta con claridad.",
+                            "options": ["A) Opción 1","B) Opción 2","C) Opción 3","D) Opción 4"] if q.get("type")=="mcq" else None,
+                            "answer": "A" if q.get("type")=="mcq" else ("Verdadero" if q.get("type")=="vf" else "Respuesta breve"),
+                            "explanation": "Ajuste automático por reglas de calidad (HU-08)."
+                        })
+                else:
+                    # minor/duplicado: intenta una vez; si no mejora, acepta original
+                    try:
+                        fixed = regenerate_question_with_gemini(topic, difficulty, q.get("type","mcq"), q, avoid_phrases=seen)
+                        if moderation_severity(review_question(fixed)) == "severe":
+                            candidate = q
+                        else:
+                            candidate = fixed
+                    except Exception:
+                        candidate = q
+                    clean.append(candidate)
+                    seen.add(_norm_for_cmp(candidate.get("question","")))
+
+            generated = clean
+
+            # Persistimos preview
             if session:
                 session.latest_preview = generated
                 session.save(update_fields=["latest_preview"])
+
             resp = {'preview': generated, 'source': 'gemini'}
             if debug:
                 resp['debug'] = {
                     'env_key_present': True,
                     'topic': topic, 'difficulty': difficulty,
-                    'types': types, 'counts': counts
+                    'types': types, 'counts': counts,
+                    'moderation': moderation
                 }
             return JsonResponse(resp, status=200)
         else:
@@ -338,7 +553,7 @@ def preview_questions(request):
     except Exception as e:
         gemini_error = str(e)
 
-    # fallback
+    # fallback local
     preview = []
     for t in types:
         n = int(counts.get(t,0))
@@ -385,15 +600,15 @@ def regenerate_question(request):
     """
     POST /api/regenerate/?debug=1
     body: { session_id: str, index: int, type?: "mcq"|"vf"|"short" }
-
     Usa session.latest_preview[index] como base (si existe) y genera una variante.
-    Guarda un registro en RegenerationLog con la vieja y la nueva versión.
-    Devuelve SOLO la nueva pregunta (para colocarla como borrador en el frontend).
+    Guarda log en RegenerationLog. Devuelve SOLO la nueva pregunta.
     """
     data = request.data
     debug = request.GET.get('debug') == '1'
+    issues = []
+    retry_used = False
 
-    # Validaciones básicas
+    # Validaciones
     session_id = data.get("session_id")
     if not session_id:
         return JsonResponse({"error": "session_id requerido"}, status=400)
@@ -410,7 +625,6 @@ def regenerate_question(request):
         return JsonResponse({"error": "index debe ser >= 0"}, status=400)
 
     qtype = data.get("type")
-    # Si no envían type, intentamos inferirlo del preview guardado
     base_q = None
     if isinstance(session.latest_preview, list) and 0 <= index < len(session.latest_preview):
         base_q = session.latest_preview[index]
@@ -422,13 +636,57 @@ def regenerate_question(request):
 
     gemini_error = None
     try:
-        if os.getenv("GEMINI_API_KEY"):
-            new_q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q)
-        else:
-            gemini_error = "GEMINI_API_KEY not set"
-            raise RuntimeError(gemini_error)
+        if not os.getenv("GEMINI_API_KEY"):
+            raise RuntimeError("GEMINI_API_KEY not set")
+
+        # Anti-repetición con historial del índice
+        seen = build_seen_set(session, index=index)
+
+        def _is_dup(qobj):
+            return _norm_for_cmp(qobj.get("question","")) in seen
+
+        attempts = 0
+        while True:
+            attempts += 1
+            new_q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases=seen)
+            issues = review_question(new_q)
+            sev = moderation_severity(issues)
+            dup = _is_dup(new_q)
+
+            if sev != "severe" and not dup:
+                break  # aceptable
+
+            # si severo o duplicado, intentamos de nuevo
+            seen.add(_norm_for_cmp(new_q.get("question","")))
+            retry_used = True
+            if attempts >= 3:
+                # Último recurso: variante segura (sin bajar calidad de forma drástica)
+                if qtype == "mcq":
+                    new_q = {
+                        "type": "mcq",
+                        "question": f"[{topic}] Variante ({difficulty}) — escenario alterno: elige la opción correcta.",
+                        "options": ["A) Opción válida","B) Distractor","C) Distractor","D) Distractor"],
+                        "answer": "A",
+                        "explanation": "Variante segura tras múltiples intentos."
+                    }
+                elif qtype == "vf":
+                    new_q = {
+                        "type": "vf",
+                        "question": f"En {topic}, el tiempo de ejecución asintótico se expresa usando notación O grande.",
+                        "answer": "Verdadero",
+                        "explanation": "Enunciado claro y objetivo."
+                    }
+                else:
+                    new_q = {
+                        "type": "short",
+                        "question": f"[{topic}] Define brevemente el concepto central.",
+                        "answer": "Definición concisa.",
+                        "explanation": "Variante segura."
+                    }
+                break
+
     except Exception as e:
-        gemini_error = gemini_error or str(e)
+        gemini_error = str(e)
         import random, uuid as _uuid
         uid = str(_uuid.uuid4())[:8]
 
@@ -461,8 +719,7 @@ def regenerate_question(request):
                 "explanation": "Variante local."
             }
 
-
-    # Registra historial
+    # Log de regeneración
     try:
         RegenerationLog.objects.create(
             session=session,
@@ -471,18 +728,17 @@ def regenerate_question(request):
             new_question=new_q
         )
     except Exception:
-        # no bloquea la respuesta si fallara guardar log
         pass
 
-    # NO reemplazamos en DB automáticamente: el reemplazo final lo decide el cliente.
-    # Pero opcionalmente puedes mantener una "draft buffer" por índice si quieres.
     resp = {"question": new_q, "source": "gemini" if not gemini_error else "placeholder"}
     if debug:
         resp["debug"] = {
             "env_key_present": bool(os.getenv("GEMINI_API_KEY")),
             "gemini_error": gemini_error,
             "topic": topic, "difficulty": difficulty, "type": qtype,
-            "base_available": base_q is not None
+            "base_available": base_q is not None,
+            "moderation_issues": issues,
+            "moderation_retry": retry_used,
         }
     return JsonResponse(resp, status=200)
 
@@ -513,7 +769,6 @@ def confirm_replace(request):
         return JsonResponse({"error":"question inválida o incompleta"}, status=400)
 
     lp = list(session.latest_preview or [])
-    # Si el index se sale, expandimos con vacíos:
     while len(lp) <= index:
         lp.append({})
     lp[index] = new_q
@@ -523,9 +778,7 @@ def confirm_replace(request):
     return JsonResponse({"ok": True})
 
 
-
-# -------------------- Prueba libre (opcional) --------------------
-
+# (Opcional) Prueba libre
 @api_view(['POST'])
 def gemini_generate(request):
     prompt = request.data.get('prompt', '')
@@ -534,7 +787,7 @@ def gemini_generate(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel(GEMINI_MODEL)
         response = model.generate_content(prompt)
         return JsonResponse({'result': response.text})
     except Exception as e:
