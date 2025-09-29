@@ -4,6 +4,8 @@ import QuizForm from "./components/QuizForm";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
 import SavedQuizzes from "./components/SavedQuizzes";
+import './App.css';
+import QuizForm from "./components/QuizForm";
 
 function App() {
   const location = useLocation();
@@ -48,8 +50,9 @@ function App() {
           <span>Proyecto Integrador II — MVP1</span>
         </footer>
       </main>
+       <QuizForm />
     </div>
-  );
+  )
 }
 
 export default App;
