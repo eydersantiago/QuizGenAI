@@ -1,38 +1,156 @@
+/* Reset pequeño para coherencia */
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
+
+/* Contenedor base */
 .App {
-  text-align: center;
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  color: #0f1222;
 }
 
-.App-logo {
-  height: 40vmin;
+/* ---------- Fondo dinámico (capas) ---------- */
+
+/* Capa 1: gradiente animado sutil */
+.bg-layer.gradient {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(1200px 800px at 10% 20%, #7c4dff33, transparent 60%),
+              radial-gradient(1000px 900px at 90% 30%, #00e5ff2b, transparent 65%),
+              radial-gradient(900px 700px at 30% 90%, #ff408133, transparent 60%),
+              linear-gradient(120deg, #0b1020, #141a33 50%, #0b1020);
+  filter: saturate(120%) contrast(102%);
+  animation: floatBg 38s ease-in-out infinite alternate;
+  will-change: transform, background-position;
+  z-index: 0;
+}
+
+/* Capa 2: blobs suaves que se desplazan muy lento */
+.bg-layer.blobs {
+  position: fixed;
+  inset: -10%;
+  background:
+    radial-gradient(200px 260px at 20% 40%, #7c4dff44 0%, transparent 60%),
+    radial-gradient(220px 240px at 80% 55%, #00e5ff3d 0%, transparent 65%),
+    radial-gradient(260px 220px at 60% 80%, #ff40813d 0%, transparent 60%);
+  filter: blur(20px);
+  animation: blobsDrift 55s ease-in-out infinite alternate;
+  z-index: 1;
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+/* Capa 3: ruido muy sutil para textura */
+.bg-noise {
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,\
+  <svg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'>\
+  <filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/><feComponentTransfer><feFuncA type='table' tableValues='0 0 0 0 0 0.015 0.03 0.04 0.05 0.06 0.07'/></feComponentTransfer></filter>\
+  <rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: .15;
+  mix-blend-mode: soft-light;
+  z-index: 2;
+  pointer-events: none;
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+/* Animaciones del fondo */
+@keyframes floatBg {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(0, -2%, 0) scale(1.02); }
+}
+@keyframes blobsDrift {
+  0%   { transform: translate3d(0,0,0) rotate(0deg) scale(1); }
+  100% { transform: translate3d(2%, -1%, 0) rotate(3deg) scale(1.03); }
+}
+
+/* Respeto a usuarios con reducción de movimiento */
+@media (prefers-reduced-motion: reduce) {
+  .bg-layer.gradient,
+  .bg-layer.blobs { animation: none; }
+}
+
+/* ---------- Contenido (glass, layout) ---------- */
+
+.shell {
+  position: relative;
+  z-index: 3;
+  width: min(1100px, 92vw);
+  margin: 0 auto;
+  padding: clamp(20px, 4vw, 40px) 0 64px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100dvh;
+}
+
+.hero {
+  text-align: center;
+  padding: clamp(24px, 5vw, 48px) 16px;
+  color: #e9ecff;
+}
+.hero h1 {
+  margin: 0 0 8px;
+  font-size: clamp(26px, 5vw, 48px);
+  letter-spacing: 0.5px;
+  color: #ffffff;
+  text-shadow: 0 4px 30px rgba(124, 77, 255, 0.35);
+}
+.hero p {
+  margin: 0 auto;
+  max-width: 60ch;
+  font-size: clamp(14px, 2.2vw, 18px);
+  color: #d5dbff;
+  opacity: .9;
+}
+
+/* Tarjeta central donde vive el <QuizForm /> */
+.card {
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.10));
+  border: 1px solid rgba(255,255,255,0.28);
+  box-shadow:
+    0 10px 30px rgba(0,0,0,0.25),
+    inset 0 1px 0 rgba(255,255,255,0.25);
+  border-radius: 20px;
+  padding: clamp(18px, 3.5vw, 28px);
+  margin: 0 auto;
+  width: min(900px, 96%);
+  color: #0f1222;
+}
+
+/* Footer minimal */
+.footer {
   display: flex;
-  flex-direction: column;
-  align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  align-items: center;
+  padding: 18px 12px 8px;
+  color: #cfd5ff;
+  font-size: 12px;
+  opacity: .85;
 }
 
-.App-link {
-  color: #61dafb;
+/* ---------- Utilidades de tipografía y enlaces ---------- */
+
+a { color: #b8c3ff; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------- Responsivo extra ---------- */
+
+@media (max-width: 520px) {
+  .card { padding: 16px; border-radius: 16px; }
+  .hero p { padding: 0 6px; }
 }
 
+/* (Opcional) estilos por defecto de CRA que ya no usamos, los mantenemos por compatibilidad */
+.App-logo { height: 40vmin; pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo { animation: App-logo-spin infinite 20s linear; }
+}
+.App-header { display: contents; }
+.App-link { color: #61dafb; }
 @keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
