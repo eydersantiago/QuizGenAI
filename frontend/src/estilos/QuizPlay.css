@@ -487,6 +487,7 @@
 .btn-black { background: #111; color: #fff; }
 .btn-green { background: #22c55e; color: #fff; }
 .btn-red { background: #ef4444; color: #fff; }
+.btn-yellow { background: #facc15; /* amarillo dorado */color: #000; /* texto negro para buen contraste */}
 
 /* ===========================
    RESULTADOS DETALLADOS
