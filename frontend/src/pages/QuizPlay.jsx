@@ -1103,7 +1103,7 @@ export default function QuizPlay() {
                         onClick={() => handleStartRegenerate(idx)}
                         title="Regenerar esta pregunta"
                       >
-                        Regenerar
+                        🔄 Regenerar
                       </button>
                     ) : (
                       <>
