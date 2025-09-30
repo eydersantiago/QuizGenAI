@@ -23,17 +23,17 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 ALLOWED_HOSTS = csv_env(
     "ALLOWED_HOSTS",
-    "localhost,127.0.0.1,.onrender.com"
+    "http://localhost:3000,http://127.0.0.1:3000,https://quiz-gen-ai-three.vercel.app"
 )
 
 CSRF_TRUSTED_ORIGINS = csv_env(
     "CSRF_TRUSTED_ORIGINS",
-    "https://quizgenai-9xdk.onrender.com,http://localhost:3000,http://127.0.0.1:3000"
+    "https://quizgenai-9xdk.onrender.com,https://quiz-gen-ai-three.vercel.app"
 )
 
 CORS_ALLOWED_ORIGINS = csv_env(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,https://quizgenai-9xdk.onrender.com"
+    "https://quizgenai-9xdk.onrender.com,https://quiz-gen-ai-three.vercel.app"
 )
 
 
@@ -46,6 +46,7 @@ CORS_ALLOW_HEADERS = ["*"]
 
 # --- Apps ---
 INSTALLED_APPS = [
+    "corsheaders",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -55,7 +56,7 @@ INSTALLED_APPS = [
 
     # externas
     "rest_framework",
-    "corsheaders",
+ 
 
     # tu app
     "api",
