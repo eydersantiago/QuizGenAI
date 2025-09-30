@@ -1,19 +1,13 @@
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-import dj_database_url  # <- asegúrate de tenerlo en requirements
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Carga .env local (no afecta a Railway; allí usarás Variables del Proyecto)
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
-# --- Utilidades ---
+# --- Util ---
 def csv_env(name, default=""):
-    """
-    Lee una env var separada por comas y devuelve lista sin espacios.
-    Ej: "a.com, b.com" -> ["a.com","b.com"]
-    """
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
 
@@ -21,52 +15,56 @@ def csv_env(name, default=""):
 SECRET_KEY = os.getenv("SECRET_KEY", "!!!_dev_only_change_me_!!!")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
+# ✅ HOSTS del backend (sin esquema)
 ALLOWED_HOSTS = csv_env(
     "ALLOWED_HOSTS",
-    "http://localhost:3000,http://127.0.0.1:3000,https://quiz-gen-ai-three.vercel.app"
+    "localhost,127.0.0.1,.onrender.com"
 )
 
-CSRF_TRUSTED_ORIGINS = csv_env(
-    "CSRF_TRUSTED_ORIGINS",
-    "https://quizgenai-9xdk.onrender.com,https://quiz-gen-ai-three.vercel.app"
-)
-
+# ✅ Orígenes FRONTEND permitidos (con esquema)
+# - Local CRA
+# - Tu dominio de Vercel
+# - (Opcional) el propio backend por si pruebas directas con curl desde el mismo host
 CORS_ALLOWED_ORIGINS = csv_env(
     "CORS_ALLOWED_ORIGINS",
-    "https://quizgenai-9xdk.onrender.com,https://quiz-gen-ai-three.vercel.app"
+    "http://localhost:3000,http://127.0.0.1:3000,https://quiz-gen-ai-three.vercel.app,https://quizgenai-9xdk.onrender.com"
 )
 
+# ✅ Regex para permitir TODOS los previews de Vercel (*.vercel.app)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$",
+]
 
-# Si necesitas credenciales (cookies) entre dominios:
+# ✅ CSRF confía en los orígenes que te harán POST (con esquema)
+CSRF_TRUSTED_ORIGINS = csv_env(
+    "CSRF_TRUSTED_ORIGINS",
+    "https://quizgenai-9xdk.onrender.com,https://quiz-gen-ai-three.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
+)
+
+# Si usas cookies/sesión entre dominios
 CORS_ALLOW_CREDENTIALS = True
 
-# Métodos/headers (lo que ya tenías, compacto)
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = ["*"]
 
 # --- Apps ---
 INSTALLED_APPS = [
-    "corsheaders",
+    "corsheaders",  # arriba ayuda a que el middleware corra primero
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
-    # externas
     "rest_framework",
- 
-
-    # tu app
     "api",
 ]
 
 # --- Middleware (orden importante) ---
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
+    "corsheaders.middleware.CorsMiddleware",   # MUY ARRIBA
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # <- sirve estáticos
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -95,13 +93,11 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 # --- Base de datos ---
-# En local (sin DATABASE_URL): usa SQLite
-# En Railway: define DATABASE_URL (Postgres) y se usará automáticamente
 DATABASES = {
     "default": dj_database_url.parse(
         os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
         conn_max_age=600,
-        ssl_require=bool(os.getenv("DATABASE_URL", ""))  # exige SSL si hay Postgres
+        ssl_require=bool(os.getenv("DATABASE_URL", "")),
     )
 }
 
@@ -123,15 +119,20 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STORAGES = {
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
-    }
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"}
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# --- Desarrollo: relajamos CORS/CSRF si DEBUG ---
+# --- HTTPS/Proxy (Render) ---
+# Asegura que Django detecte HTTPS detrás del proxy y ponga cookies seguras en prod
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+if not DEBUG:
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+
+# --- Desarrollo: modo laxo si DEBUG ---
 if DEBUG:
-    # Permite todo CORS en dev (útil si haces pruebas locales)
-    CORS_ALLOWED_ORIGINS = CORS_ALLOWED_ORIGINS or []
-    CORS_ALLOW_ALL_ORIGINS = True
+    # Permite todo CORS en dev si no configuraste CORS_ALLOWED_ORIGINS
+    if not CORS_ALLOWED_ORIGINS:
+        CORS_ALLOW_ALL_ORIGINS = True
