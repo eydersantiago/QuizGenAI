@@ -23,11 +23,11 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # En producción: configura ALLOWED_HOSTS desde env, ej.:
 # ALLOWED_HOSTS=tu-api.up.railway.app,api.tudominio.com
-ALLOWED_HOSTS = csv_env("ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = csv_env("ALLOWED_HOSTS", "localhost,127.0.0.1", "https://quizgenai-9xdk.onrender.com")
 
 # CSRF_TRUSTED_ORIGINS debe incluir los ORÍGENES (con esquema) que te van a hacer POST, ej.:
 # CSRF_TRUSTED_ORIGINS=https://tu-api.up.railway.app,https://tuapp.vercel.app
-CSRF_TRUSTED_ORIGINS = csv_env("CSRF_TRUSTED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
+CSRF_TRUSTED_ORIGINS = csv_env("CSRF_TRUSTED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000", "https://quizgenai-9xdk.onrender.com",)
 
 # CORS: permite solo tu frontend en prod. Puedes inyectar la lista por env
 # CORS_ALLOWED_ORIGINS=https://tuapp.vercel.app,https://tu-dominio.com
