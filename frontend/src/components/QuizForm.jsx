@@ -46,6 +46,7 @@ const TAXONOMY = [
 const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
+console.log('API_BASE:', process.env.REACT_APP_API_BASE);
 
 
 /** AutocompleteSelect: select con buscador */
