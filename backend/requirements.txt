@@ -29,3 +29,5 @@ charset_normalizer==3.4.3
 idna==3.10
 urllib3==2.5.0
 colorama==0.4.6
+uvicorn[standard]==0.30.6
+typing_extensions==4.15.0

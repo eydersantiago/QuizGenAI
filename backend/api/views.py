@@ -9,7 +9,7 @@ from rest_framework.decorators import api_view
 from rest_framework import status
 from django.utils import timezone
 
-import google.generativeai as genai
+#import google.generativeai as genai
 from .models import GenerationSession, RegenerationLog
 
 load_dotenv()
@@ -177,6 +177,28 @@ def build_seen_set(session: GenerationSession, index: int = None) -> set:
 # Gemini prompts (modelo y helpers)
 # =========================================================
 
+def _get_genai():
+    """
+    Import tardío para evitar que Azure cargue primero /agents/python y rompa typing_extensions.
+    Si falla la importación, elevamos un RuntimeError 'genai_unavailable' que se maneja como 503.
+    """
+    try:
+        import google.generativeai as genai  # import perezoso
+        return genai
+    except Exception as e:
+        raise RuntimeError(f"genai_unavailable: {e}")
+
+def _configure_gemini():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+    genai = _get_genai()
+    genai.configure(api_key=api_key)
+    return genai
+
+
+
+
 # Modelo con free tier generoso y buen rendimiento.
 GEMINI_MODEL = "gemini-2.5-flash"
 
@@ -216,7 +238,8 @@ def _json_schema_one():
     }
 
 def generate_questions_with_gemini(topic, difficulty, types, counts):
-    _configure_gemini()
+    # Configurar e importar aquí (perezoso)
+    genai = _configure_gemini()
 
     total = sum(int(counts.get(t, 0)) for t in types)
     schema = _json_schema_questions()
@@ -242,7 +265,7 @@ Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
             response_schema=schema,
-            temperature=0.9,   # ↑ diversidad
+            temperature=0.9,
             top_p=0.95,
             top_k=64,
         )
@@ -269,7 +292,8 @@ def regenerate_question_with_gemini(topic, difficulty, qtype, base_question=None
     Genera UNA variante, manteniendo tema/dificultad/tipo.
     - avoid_phrases: set/list de enunciados normalizados a evitar (anti-repetición).
     """
-    _configure_gemini()
+    # Configurar e importar aquí (perezoso)
+    genai = _configure_gemini()
 
     schema = _json_schema_one()
     if qtype not in ("mcq", "vf", "short"):
@@ -319,7 +343,7 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
             response_schema=schema,
-            temperature=0.95,  # todavía más diversidad para variantes
+            temperature=0.95,
             top_p=0.95,
             top_k=64,
         )
@@ -346,7 +370,6 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
             data["answer"] = "Verdadero"
 
     return data
-
 
 # =========================================================
 # Taxonomía / Dominio (HU-06)
@@ -792,17 +815,19 @@ def confirm_replace(request):
     return JsonResponse({"ok": True})
 
 
-# (Opcional) Prueba libre
 @api_view(['POST'])
 def gemini_generate(request):
     prompt = request.data.get('prompt', '')
     try:
-        _configure_gemini()
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
-    try:
+        genai = _configure_gemini()   # importa y configura aquí
         model = genai.GenerativeModel(GEMINI_MODEL)
         response = model.generate_content(prompt)
         return JsonResponse({'result': response.text})
+    except RuntimeError as e:
+        # genai_unavailable o falta de API key -> 503 para que Front distinga “servicio externo caído”
+        return JsonResponse(
+            {'error': 'genai_unavailable', 'message': str(e)},
+            status=503
+        )
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
