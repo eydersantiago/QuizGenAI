@@ -1,6 +1,7 @@
 # api/serializers.py
 from rest_framework import serializers
 from .models import SavedQuiz, GenerationSession
+from .models import AudioPrivacyPreference, AudioSession, AudioDeletionAudit
 
 TAXONOMY = [
     "algoritmos", "redes", "bd", "bases de datos",
@@ -111,3 +112,35 @@ class UpdateQuizProgressSerializer(serializers.Serializer):
     user_answers = serializers.DictField()
     is_completed = serializers.BooleanField(required=False)
     score = serializers.DictField(required=False)
+
+class AudioPrivacyPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AudioPrivacyPreference
+        fields = ['save_audio', 'save_transcriptions', 'consent_given_at', 'last_updated']
+        read_only_fields = ['consent_given_at', 'last_updated']
+
+
+class AudioSessionSerializer(serializers.ModelSerializer):
+    audio_count = serializers.SerializerMethodField()
+    transcription_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AudioSession
+        fields = ['session_id', 'created_at', 'expires_at', 'is_deleted', 
+                  'audio_count', 'transcription_count']
+        read_only_fields = ['session_id', 'created_at', 'expires_at']
+    
+    def get_audio_count(self, obj):
+        return obj.audio_data.count()
+    
+    def get_transcription_count(self, obj):
+        return obj.transcriptions.count()
+
+
+class AudioDeletionAuditSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    
+    class Meta:
+        model = AudioDeletionAudit
+        fields = ['session_id', 'username', 'deleted_at', 'items_deleted', 'deletion_method']
+        read_only_fields = ['deleted_at']
