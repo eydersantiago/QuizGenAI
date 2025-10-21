@@ -1,5 +1,6 @@
 # api/voice_metrics_views.py
 import logging
+import uuid
 from django.http import JsonResponse, HttpResponse
 from rest_framework.decorators import api_view
 from rest_framework import status
@@ -55,6 +56,17 @@ def log_voice_event(request):
         # Validar que metadata sea un dict
         if not isinstance(metadata, dict):
             metadata = {}
+
+        # Validar que session_id sea un UUID válido si está presente
+        if session_id is not None:
+            try:
+                # Intentar convertir a UUID para validar el formato
+                uuid.UUID(str(session_id))
+            except (ValueError, AttributeError):
+                return JsonResponse(
+                    {'error': f'session_id must be a valid UUID, got: {session_id}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         # Crear el evento
         event = VoiceMetricEvent.objects.create(
