@@ -109,15 +109,35 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"}
 }
 
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+# DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-if not DEBUG:
-    SECURE_SSL_REDIRECT = True
-    CSRF_COOKIE_SECURE = True
-    SESSION_COOKIE_SECURE = True
-    USE_X_FORWARDED_HOST = True
+# if not DEBUG:
+#     SECURE_SSL_REDIRECT = True
+#     CSRF_COOKIE_SECURE = True
+#     SESSION_COOKIE_SECURE = True
+#     USE_X_FORWARDED_HOST = True
+
+
+# === Solo para DESARROLLO ===
+DEBUG = True
+SECURE_SSL_REDIRECT = False
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
+SECURE_HSTS_SECONDS = 0
+SECURE_PROXY_SSL_HEADER = None  # si lo tenías para Azure tras Nginx/FrontDoor
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
+
+
+
+
+
+
+
+
+
+
     # HSTS opcional en prod
     # SECURE_HSTS_SECONDS = 31536000
     # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
