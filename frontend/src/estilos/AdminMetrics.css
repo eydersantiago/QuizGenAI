@@ -288,3 +288,53 @@
   from { width: 0; }
   to { /* width seteado inline */ }
 }
+
+/* ADDED: Voice Metrics Table */
+.am-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+
+.am-table thead {
+  border-bottom: 2px solid var(--am-stroke);
+}
+
+.am-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--am-fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.am-table tbody tr {
+  border-bottom: 1px solid var(--am-stroke);
+  transition: background 150ms ease;
+}
+
+.am-table tbody tr:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.am-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.am-table td {
+  padding: 12px;
+  font-size: 14px;
+  color: var(--am-fg);
+}
+
+.am-table td:first-child {
+  font-weight: 600;
+}
+
+.am-table td:last-child {
+  text-align: right;
+  color: var(--am-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
