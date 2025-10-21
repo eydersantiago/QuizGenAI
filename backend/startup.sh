@@ -1,4 +1,10 @@
+rm -f /home/site/wwwroot/typing_extensions.py
+rm -rf /home/site/wwwroot/typing_extensions
+rm -rf /home/site/wwwroot/__pycache__
 #!/bin/bash
+rm -f /home/site/wwwroot/typing_extensions.py
+rm -rf /home/site/wwwroot/typing_extensions
+rm -rf /home/site/wwwroot/__pycache__
 set -euo pipefail
 
 APP_DIR="/home/site/wwwroot"

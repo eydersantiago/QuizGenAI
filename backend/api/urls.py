@@ -1,11 +1,9 @@
 from django.urls import path
 from . import views
 from .views_metrics import metrics_summary, metrics_export
-from .intent_router_views import IntentRouterViewSet
 from .views_saved_quizzes import (
     saved_quizzes, saved_quiz_detail, load_saved_quiz, quiz_statistics
 )
-
 
 urlpatterns = [
     path("health/", views.health_check, name="health_check"),
@@ -26,5 +24,4 @@ urlpatterns = [
     path("saved-quizzes/statistics/", quiz_statistics, name="quiz_statistics"),
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
-    router.register(r'intent-router', IntentRouterViewSet, basename='intent-router')
 ]
