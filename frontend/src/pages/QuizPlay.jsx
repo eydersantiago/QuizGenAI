@@ -6,6 +6,7 @@ import { Save, BookOpen } from "lucide-react";
 import jsPDF from "jspdf";
 import Swal from "sweetalert2";
 import "../estilos/QuizPlay.css";
+import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
@@ -188,6 +189,7 @@ const exportToTXT = (questions, answers, submitted) => {
 
 export default function QuizPlay() {
   const { sessionId } = useParams();
+  const { provider, headerName } = useModelProvider();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -246,11 +248,11 @@ export default function QuizPlay() {
         }
 
         // Carga normal de sesión nueva
-        const resp = await fetch(`${API_BASE}/preview/`, {
+        const resp = await fetch(`${API_BASE}/preview/`, withProviderHeaders({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: sessionId }),
-        });
+        }, provider, headerName));
         const data = await resp.json();
         if (!resp.ok)
           throw new Error(data?.error || "No se pudo cargar el quiz");
@@ -305,7 +307,7 @@ export default function QuizPlay() {
   const requestRemoteRegeneration = async (idx) => {
     try {
       const q = questions[idx];
-      const resp = await fetch(`${API_BASE}/regenerate/`, {
+      const resp = await fetch(`${API_BASE}/regenerate/`, withProviderHeaders({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -313,7 +315,7 @@ export default function QuizPlay() {
           index: idx,
           type: q?.type, // mantiene tipo
         }),
-      });
+      }, provider, headerName));
 
       const data = await resp.json();
       if (!resp.ok) throw new Error(data?.error || "No se pudo regenerar");
@@ -389,7 +391,7 @@ export default function QuizPlay() {
 
     // Persistir en servidor para que futuras regeneraciones usen esta versión
     try {
-      await fetch(`${API_BASE}/confirm-replace/`, {
+      await fetch(`${API_BASE}/confirm-replace/`, withProviderHeaders({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -397,7 +399,7 @@ export default function QuizPlay() {
           index: idx,
           question: candidate,
         }),
-      });
+      }, provider, headerName));
       // Toast de éxito
       window.alert("¡Pregunta reemplazada exitosamente!");
     } catch (_) {

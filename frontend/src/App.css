@@ -154,3 +154,60 @@ a:hover { text-decoration: underline; }
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* ====== Toolbars (home) ====== */
+
+/* Estilo base */
+.app-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Botón voice + select (apariencia) */
+.btn-voice-link {
+  text-decoration: none;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;         /* gray-200 */
+  border-radius: 8px;
+  font-size: 14px;
+  color: inherit;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(4px);
+}
+.btn-voice-link:hover {
+  background: rgba(255,255,255,0.8);
+}
+
+/* ====== MÓVIL (por defecto) -> toolbar fuera de la tarjeta ====== */
+.app-toolbar--home-outside {
+  justify-content: flex-end;
+  margin: 8px 0 12px;
+}
+.app-toolbar--card-inside {
+  display: none; /* oculta la versión dentro de la tarjeta en móvil */
+}
+
+/* ====== ESCRITORIO (md/lg) -> toolbar dentro de la tarjeta ====== */
+@media (min-width: 1024px) {
+  .app-toolbar--home-outside {
+    display: none; /* oculta versión mobile fuera de la tarjeta */
+  }
+
+  /* La tarjeta necesita espacio superior para que no tapen los controles */
+  .card.has-toolbar {
+    position: relative;
+    padding-top: 56px; /* deja espacio para la barra interna */
+  }
+
+  .app-toolbar--card-inside {
+    display: flex;
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    justify-content: space-between; /* voz a la izquierda, select a la derecha */
+    align-items: center;
+    pointer-events: auto;
+  }
+}

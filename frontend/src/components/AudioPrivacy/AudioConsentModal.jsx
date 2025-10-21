@@ -1,115 +1,78 @@
 // frontend/src/components/AudioPrivacy/AudioConsentModal.jsx
 
-import React, { useState } from 'react';
-import './AudioConsentModal.css';
+import React from "react";
+import "./AudioConsentModal.css";
 
-const AudioConsentModal = ({ onAccept, onDecline }) => {
-  const [saveAudio, setSaveAudio] = useState(true);
-  const [saveTranscriptions, setSaveTranscriptions] = useState(true);
-
-  const handleAccept = () => {
-    onAccept({ saveAudio, saveTranscriptions });
-  };
-
+export default function AudioConsentModal({ onAccept, onDecline }) {
   return (
-    <div className="audio-consent-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="consent-title">
-      <div className="audio-consent-modal">
-        <h2 id="consent-title">Privacidad y uso de audio</h2>
-        
-        <div className="consent-content">
-          <p className="consent-intro">
-            QuizGenAI utiliza funciones de voz para mejorar tu experiencia de aprendizaje. 
-            Te explicamos cómo manejamos tu información de audio:
-          </p>
-
-          <div className="consent-section">
-            <h3>¿Qué recolectamos?</h3>
-            <ul>
-              <li>Grabaciones de audio cuando usas comandos de voz</li>
-              <li>Transcripciones de texto de tus comandos</li>
-              <li>Metadatos básicos (duración, fecha, precisión)</li>
-            </ul>
-          </div>
-
-          <div className="consent-section">
-            <h3>¿Cómo lo usamos?</h3>
-            <ul>
-              <li>Procesar tus comandos de voz y peticiones</li>
-              <li>Mejorar la precisión del reconocimiento</li>
-              <li>Generar sugerencias personalizadas</li>
-            </ul>
-          </div>
-
-          <div className="consent-section">
-            <h3>Retención y seguridad</h3>
-            <ul>
-              <li><strong>Almacenamiento cifrado</strong> de todos los datos de audio</li>
-              <li><strong>TTL de 24 horas:</strong> Los datos se eliminan automáticamente después de 24 horas</li>
-              <li><strong>Control total:</strong> Puedes eliminar tus datos en cualquier momento</li>
-              <li>Redacción automática de información personal identificable (PII)</li>
-            </ul>
-          </div>
-
-          <div className="consent-options">
-            <label className="consent-checkbox">
-              <input
-                type="checkbox"
-                checked={saveAudio}
-                onChange={(e) => setSaveAudio(e.target.checked)}
-                aria-describedby="save-audio-desc"
-              />
-              <span>
-                <strong>Guardar audio</strong>
-                <span id="save-audio-desc" className="option-desc">
-                  Permite guardar grabaciones para mejorar la experiencia
-                </span>
-              </span>
-            </label>
-
-            <label className="consent-checkbox">
-              <input
-                type="checkbox"
-                checked={saveTranscriptions}
-                onChange={(e) => setSaveTranscriptions(e.target.checked)}
-                aria-describedby="save-trans-desc"
-              />
-              <span>
-                <strong>Guardar transcripciones</strong>
-                <span id="save-trans-desc" className="option-desc">
-                  Permite guardar el texto transcrito de tus comandos
-                </span>
-              </span>
-            </label>
-          </div>
-
-          <p className="consent-note">
-            ℹ️ Puedes cambiar estas preferencias en cualquier momento desde Configuración.
-          </p>
+    <div className="acm-overlay" role="dialog" aria-modal="true" aria-labelledby="acm-title">
+      <div className="acm-modal">
+        {/* Header */}
+        <div className="acm-header">
+          <h3 id="acm-title">Privacidad y uso de audio</h3>
         </div>
 
-        <div className="consent-actions">
-          <button 
-            className="btn btn-secondary" 
-            onClick={onDecline}
-            aria-label="Rechazar y no usar funciones de voz"
-          >
-            No usar voz
-          </button>
-          <button 
-            className="btn btn-primary" 
-            onClick={handleAccept}
-            aria-label="Aceptar y continuar"
-          >
-            Aceptar y continuar
-          </button>
+        {/* Body (scrollable) */}
+        <div className="acm-body" tabIndex={0}>
+          <p>
+            Para habilitar comandos de voz, necesitamos tu consentimiento para procesar audio y
+            (opcionalmente) guardar transcripciones. Puedes cambiar estas preferencias en cualquier momento
+            en <strong>Configuración &gt; Privacidad de audio</strong>.
+          </p>
+
+          <h4>¿Qué se procesa?</h4>
+          <ul>
+            <li>Fragmentos de audio enviados desde tu micrófono mientras el panel de voz está activo.</li>
+            <li>Transcripciones generadas automáticamente para interpretar tus comandos.</li>
+          </ul>
+
+          <h4>¿Qué se almacena?</h4>
+          <ul>
+            <li><strong>Grabaciones de audio</strong>: solo si lo permites en las preferencias.</li>
+            <li><strong>Transcripciones</strong>: solo si lo permites en las preferencias.</li>
+            <li>Los datos se eliminan automáticamente según la política de retención.</li>
+          </ul>
+
+          <h4>Seguridad</h4>
+          <ul>
+            <li>Cifrado en tránsito y en reposo.</li>
+            <li>Redacción automática de información sensible cuando corresponde.</li>
+          </ul>
+
+          <h4>Tus controles</h4>
+          <ul>
+            <li>Desactivar/activar guardado de audio y transcripciones.</li>
+            <li>Eliminar sesiones de audio de manera individual o todas a la vez.</li>
+          </ul>
+
+          <p>
+            Al continuar, aceptas el procesamiento de audio para detectar comandos de voz. El guardado
+            de audios/transcripciones es configurable y puedes modificarlo en cualquier momento.
+          </p>
+
+          {/* Texto de ejemplo largo para demostrar scroll */}
+          <div className="acm-disclaimer">
+            <p>
+              Nota: si el texto de esta política es extenso, puedes desplazarte dentro de este cuadro
+              sin perder de vista los botones de acción. Esta ventana incluye una barra de desplazamiento
+              independiente para que puedas revisar todo el contenido antes de aceptar o rechazar.
+            </p>
+          </div>
         </div>
 
-        <a href="/privacy-policy" className="privacy-link" target="_blank" rel="noopener noreferrer">
-          Ver política de privacidad completa
-        </a>
+        {/* Footer (sticky) */}
+        <div className="acm-footer">
+          <button className="acm-btn acm-btn-secondary" onClick={onDecline}>
+            No, gracias
+          </button>
+          <button
+            className="acm-btn acm-btn-primary"
+            onClick={() => onAccept?.({ save_audio: true, save_transcriptions: true })}
+          >
+            Continuar y aceptar
+          </button>
+        </div>
       </div>
     </div>
   );
-};
-
-export default AudioConsentModal;
+}

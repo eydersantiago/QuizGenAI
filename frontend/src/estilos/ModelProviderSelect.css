@@ -1,0 +1,137 @@
+/* ModelProviderSelect.css */
+/* Estilos para el contenedor del selector de proveedor de IA */
+
+.model-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.2;
+  color: #1f2937; /* gris-800 */
+}
+
+/* Versión compacta (menos separación y fuente ligeramente más pequeña) */
+.model-select.compact {
+  gap: 8px;
+  font-size: 13px;
+}
+
+/* Etiqueta “Motor IA:” cuando no es compact */
+.model-select > label {
+  margin: 0;
+  color: #374151; /* gris-700 */
+  font-weight: 600;
+}
+
+/* ---------- Select base ---------- */
+.model-select select {
+  /* Reseteo suave */
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  background-color: #fff;
+  color: #111827; /* gris-900 */
+  border: 1px solid #e5e7eb; /* gris-200 */
+  border-radius: 8px; /* rounded-md */
+  padding: 8px 34px 8px 10px; /* espacio para chevron */
+  font-size: inherit;
+  line-height: 1.2;
+  min-height: 34px;
+
+  /* Sombra ligera */
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+/* Hover */
+.model-select select:hover {
+  border-color: #cbd5e1; /* slate-300 */
+}
+
+/* Focus */
+.model-select select:focus {
+  outline: none;
+  border-color: #818cf8; /* indigo-400 */
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.25); /* ring-indigo-400/25 */
+}
+
+/* Disabled */
+.model-select select:disabled {
+  color: #6b7280; /* gris-500 */
+  background-color: #f9fafb; /* gris-50 */
+  cursor: not-allowed;
+}
+
+/* Chevron (flecha) con SVG embebido */
+.model-select select {
+  background-image: url("data:image/svg+xml;utf8,<svg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M6 8l4 4 4-4' stroke='%236B7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 18px 18px;
+}
+
+/* Estado activo (cuando se despliega en algunos navegadores) */
+.model-select select:active {
+  border-color: #a5b4fc; /* indigo-300 */
+}
+
+/* ---------- Ubicación en toolbars (opcional) ---------- */
+/* Si lo pones dentro de una barra superior, alinea y deja respiración */
+.app-toolbar .model-select {
+  margin-left: auto; /* empuja a la derecha */
+}
+
+/* ---------- Responsivo ---------- */
+@media (max-width: 480px) {
+  .model-select {
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  .model-select select {
+    min-height: 32px;
+    padding: 6px 32px 6px 10px;
+  }
+}
+
+/* ---------- Modo oscuro automático ---------- */
+@media (prefers-color-scheme: dark) {
+  .model-select {
+    color: #e5e7eb; /* gris-200 */
+  }
+
+  .model-select > label {
+    color: #d1d5db; /* gris-300 */
+  }
+
+  .model-select select {
+    background-color: #0f172a; /* slate-950 */
+    color: #e5e7eb;            /* gris-200 */
+    border-color: #334155;     /* slate-700 */
+  }
+
+  .model-select select:hover {
+    border-color: #475569;     /* slate-600 */
+  }
+
+  .model-select select:focus {
+    border-color: #818cf8;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.28);
+  }
+
+  .model-select select {
+    background-image: url("data:image/svg+xml;utf8,<svg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M6 8l4 4 4-4' stroke='%23D1D5DB' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  }
+}
+
+/* ---------- Estados de validación (si los necesitas) ---------- */
+.model-select select.is-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+}
+
+.model-select select.is-success {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}

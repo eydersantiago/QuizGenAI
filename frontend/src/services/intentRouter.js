@@ -1,16 +1,36 @@
 // frontend/src/services/intentRouter.js
 
-import axios from 'axios';
-
 /**
  * Servicio para procesamiento de intenciones de voz
  * Implementa QGAI-107: Router de intenciones con fallback
  */
+
 class IntentRouterService {
   constructor() {
     this.baseUrl = '/api/intent-router';
     this.cache = new Map();
     this.cacheTimeout = 5 * 60 * 1000; // 5 minutos
+  }
+
+  // Helper interno para llamadas fetch con JSON y manejo de errores
+  async _fetch(path, { method = 'GET', data } = {}) {
+    const init = {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (data !== undefined) init.body = JSON.stringify(data);
+
+    const resp = await fetch(`${this.baseUrl}${path}`, init);
+    let json = null;
+    try { json = await resp.json(); } catch {}
+    if (!resp.ok) {
+      const msg = (json && (json.detail || json.error || json.message)) || `HTTP ${resp.status}`;
+      const err = new Error(msg);
+      err.status = resp.status;
+      err.payload = json;
+      throw err;
+    }
+    return json ?? {};
   }
 
   /**
@@ -32,17 +52,18 @@ class IntentRouterService {
     }
 
     try {
-      const response = await axios.post(`${this.baseUrl}/parse/`, {
-        text: text
+      const response = await this._fetch('/parse/', {
+        method: 'POST',
+        data: { text }
       });
 
       const result = {
-        intent: response.data.intent,
-        confidence: response.data.confidence,
-        slots: response.data.slots || {},
-        backendUsed: response.data.backend_used,
-        latencyMs: response.data.latency_ms,
-        warning: response.data.warning || null,
+        intent: response.intent,
+        confidence: response.confidence,
+        slots: response.slots || {},
+        backendUsed: response.backend_used,
+        latencyMs: response.latency_ms,
+        warning: response.warning || null,
         timestamp: Date.now()
       };
 
@@ -59,7 +80,6 @@ class IntentRouterService {
 
     } catch (error) {
       console.error('Intent parsing error:', error);
-      
       // Fallback local básico
       return this._localFallback(text);
     }
@@ -76,11 +96,12 @@ class IntentRouterService {
     }
 
     try {
-      const response = await axios.post(`${this.baseUrl}/batch_parse/`, {
-        texts: texts
+      const response = await this._fetch('/batch_parse/', {
+        method: 'POST',
+        data: { texts }
       });
 
-      return response.data.results.map(r => ({
+      return (response.results || []).map(r => ({
         text: r.text,
         intent: r.intent,
         confidence: r.confidence,
@@ -91,7 +112,6 @@ class IntentRouterService {
 
     } catch (error) {
       console.error('Batch parsing error:', error);
-      
       // Fallback: parsear uno por uno localmente
       return texts.map(text => this._localFallback(text));
     }
@@ -103,8 +123,8 @@ class IntentRouterService {
    */
   async getSupportedIntents() {
     try {
-      const response = await axios.get(`${this.baseUrl}/supported_intents/`);
-      return response.data;
+      const response = await this._fetch('/supported_intents/');
+      return response;
     } catch (error) {
       console.error('Error fetching supported intents:', error);
       return { intents: {} };
@@ -117,8 +137,8 @@ class IntentRouterService {
    */
   async checkHealth() {
     try {
-      const response = await axios.get(`${this.baseUrl}/health/`);
-      return response.data;
+      const response = await this._fetch('/health/');
+      return response;
     } catch (error) {
       console.error('Health check error:', error);
       return {
@@ -138,7 +158,7 @@ class IntentRouterService {
    */
   _localFallback(text) {
     const textLower = text.toLowerCase().trim();
-    
+
     // Patrones básicos locales
     const patterns = {
       navigate_next: /siguiente|próxima?|continua?r?|adelante|next|avanza|sigue/,

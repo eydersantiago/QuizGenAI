@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Eye, PlusCircle, CheckCircle, BookOpen } from "lucide-react";
 import Swal from "sweetalert2";
 import "../estilos/QuizForm.css";
-
+import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
+import ModelProviderSelect from "../components/ModelProviderSelect";
 
 const TAXONOMY = [
   "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
@@ -46,8 +47,7 @@ const TAXONOMY = [
 const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
-console.log('API_BASE:', process.env.REACT_APP_API_BASE);
-
+console.log("API_BASE:", process.env.REACT_APP_API_BASE);
 
 /** AutocompleteSelect: select con buscador */
 function AutocompleteSelect({ value, onChange, options, placeholder }) {
@@ -165,6 +165,7 @@ function AutocompleteSelect({ value, onChange, options, placeholder }) {
 }
 
 export default function QuizForm() {
+  const { provider, headerName } = useModelProvider();
   const [topic, setTopic] = useState("");
   const [difficulty, setDifficulty] = useState("Fácil");
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
@@ -207,12 +208,12 @@ export default function QuizForm() {
       difficulty,
       types,
       counts,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    
+
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(dataToSave));
     setLastSaved(new Date());
-    
+
     // Simular un pequeño delay para mostrar el indicador
     setTimeout(() => {
       setIsAutoSaving(false);
@@ -247,7 +248,9 @@ export default function QuizForm() {
 
   function validate() {
     const topicNorm = norm(topic);
-    const matched = TAXONOMY.find((x) => norm(x) === topicNorm || norm(x).includes(topicNorm) || topicNorm.includes(norm(x)));
+    const matched = TAXONOMY.find(
+      (x) => norm(x) === topicNorm || norm(x).includes(topicNorm) || topicNorm.includes(norm(x))
+    );
     if (!matched) {
       Swal.fire("Tema no válido", "Debe ser un tema de informática/sistemas.", "warning");
       return false;
@@ -270,30 +273,49 @@ export default function QuizForm() {
   async function handlePreview() {
     if (!validate()) return;
     const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
-    const res = await fetch(`${API_BASE}/preview/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+
+    const res = await fetch(
+      `${API_BASE}/preview/`,
+      withProviderHeaders(
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        provider,
+        headerName
+      )
+    );
     const json = await res.json();
     if (res.ok) setPreview(json.preview);
     else Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
   }
 
+  // CREA SESIÓN (separado de métricas)
   async function handleCreate() {
     if (!validate()) return;
     try {
       setCreating(true);
       const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
-      const res = await fetch(`${API_BASE}/sessions/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+
+      const res = await fetch(
+        `${API_BASE}/sessions/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          provider,
+          headerName
+        )
+      );
 
       // intenta parsear JSON incluso en error
       let json = {};
-      try { json = await res.json(); } catch (_) {}
+      try {
+        json = await res.json();
+      } catch (_) {}
 
       if (!res.ok) {
         Swal.fire("Error", json?.error || "No se pudo crear la sesión", "error");
@@ -322,6 +344,7 @@ export default function QuizForm() {
     }
   }
 
+  // OBTENER MÉTRICAS (endpoint separado)
   async function handleGetMetrics() {
     if (!validate()) return;
     try {
@@ -334,16 +357,25 @@ export default function QuizForm() {
         counts: JSON.stringify(counts),
       }).toString();
 
-      const res = await fetch(`${API_BASE}/metrics/?${params}`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      });
+      const res = await fetch(
+        `${API_BASE}/metrics/?${params}`,
+        withProviderHeaders(
+          {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          },
+          provider,
+          headerName
+        )
+      );
 
       let json = {};
-      try { json = await res.json(); } catch (_) {}
+      try {
+        json = await res.json();
+      } catch (_) {}
 
       if (!res.ok) {
-        Swal.fire("Error", json?.error || "No se pudo crear las métricas", "error");
+        Swal.fire("Error", json?.error || "No se pudieron obtener las métricas", "error");
         return;
       }
 
@@ -356,9 +388,10 @@ export default function QuizForm() {
         timerProgressBar: true,
       });
 
-      // Limpiar datos guardados después del éxito
-      clearSavedData();
-      // Aquí puedes redirigir o actualizar el estado si lo necesitas
+      // Limpiar datos guardados después del éxito (opcional)
+      // clearSavedData();
+
+      // Redirigir a panel de métricas
       navigate(`/admin/metrics`);
     } catch (err) {
       Swal.fire("Error", String(err), "error");
@@ -374,9 +407,7 @@ export default function QuizForm() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
     >
-      <h2 className="text-3xl font-extrabold text-indigo-700 text-center mb-6">
-        🎯 Genera tu Quiz Inteligente
-      </h2>
+      <h2 className="text-3xl font-extrabold text-indigo-700 text-center mb-6">🎯 Genera tu Quiz Inteligente</h2>
 
       {/* Indicador de guardado automático */}
       <div className="autosave-indicator mb-4">
@@ -392,24 +423,20 @@ export default function QuizForm() {
         ) : lastSaved ? (
           <div className="flex items-center justify-center gap-2 text-green-600">
             <CheckCircle size={16} />
-            <span className="text-sm">
-              Guardado automáticamente a las {lastSaved.toLocaleTimeString()}
-            </span>
+            <span className="text-sm">Guardado automáticamente a las {lastSaved.toLocaleTimeString()}</span>
           </div>
         ) : null}
       </div>
 
       {/* Tema (Autocomplete) */}
       <label className="block font-bold text-black-700 mb-1">Tema</label>
-      <AutocompleteSelect
-        value={topic}
-        onChange={setTopic}
-        options={TAXONOMY}
-        placeholder="Ej: Algoritmos de búsqueda"
-      />
+      <AutocompleteSelect value={topic} onChange={setTopic} options={TAXONOMY} placeholder="Ej: Algoritmos de búsqueda" />
 
-      {/* Dificultad */}
-      <label className="block font-bold text-black-700 mb-1 mt-4">Dificultad</label>
+      {/* Dificultad + Selector de proveedor */}
+      <div className="flex items-center justify-between mt-4 mb-1">
+        <label className="block font-bold text-black-700">Dificultad</label>
+        {/* <ModelProviderSelect compact /> */}
+      </div>
       <select
         value={difficulty}
         onChange={(e) => setDifficulty(e.target.value)}
@@ -423,15 +450,9 @@ export default function QuizForm() {
       {/* Tipos de pregunta */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-6">
         {["mcq", "vf", "short"].map((t) => (
-          <motion.label
-            key={t}
-            whileTap={{ scale: 0.95 }}
-            className={`toggle ${types[t] ? "is-on" : ""}`}
-          >
+          <motion.label key={t} whileTap={{ scale: 0.95 }} className={`toggle ${types[t] ? "is-on" : ""}`}>
             <input type="checkbox" className="hidden" checked={types[t]} onChange={() => toggleType(t)} />
-            <span className="capitalize">
-              {t === "mcq" ? "Opción múltiple" : t === "vf" ? "V/F" : "Corta"}
-            </span>
+            <span className="capitalize">{t === "mcq" ? "Opción múltiple" : t === "vf" ? "V/F" : "Corta"}</span>
           </motion.label>
         ))}
       </div>
@@ -445,12 +466,7 @@ export default function QuizForm() {
               <span className="text-sm font-semibold">{t.toUpperCase()}</span>
 
               {/* Signo de admiración con tooltip */}
-              <span
-                className="hint"
-                role="button"
-                tabIndex={0}
-                aria-label={`¿Qué significa ${t.toUpperCase()}?`}
-              >
+              <span className="hint" role="button" tabIndex={0} aria-label={`¿Qué significa ${t.toUpperCase()}?`}>
                 !
                 <span className="tooltip" role="tooltip">
                   {t === "mcq" && (
@@ -487,30 +503,16 @@ export default function QuizForm() {
         ))}
       </div>
 
-
       {/* Botones */}
       <div className="flex flex-col sm:flex-row gap-4">
-        <button
-          onClick={handlePreview}
-          className="btn btn-indigo"
-        >
+        <button onClick={handlePreview} className="btn btn-indigo">
           <Eye size={20} /> Previsualizar
         </button>
-        <button
-          onClick={handleCreate}
-          className="btn btn-green"
-          disabled={creating}
-          aria-busy={creating}
-        >
+        <button onClick={handleCreate} className="btn btn-green" disabled={creating} aria-busy={creating}>
           <PlusCircle size={20} />
           {creating ? "Creando..." : "Crear Sesión"}
         </button>
-        <button
-          onClick={handleGetMetrics}
-          className="btn btn-marron"
-          disabled={creating}
-          aria-busy={creating}
-        >
+        <button onClick={handleGetMetrics} className="btn btn-marron" disabled={creating} aria-busy={creating}>
           <CheckCircle size={20} />
           {creating ? "Creando..." : "Obtener Métricas"}
         </button>
@@ -529,7 +531,7 @@ export default function QuizForm() {
                 showCancelButton: true,
                 confirmButtonText: "Sí, limpiar",
                 cancelButtonText: "Cancelar",
-                confirmButtonColor: "#dc2626"
+                confirmButtonColor: "#dc2626",
               }).then((result) => {
                 if (result.isConfirmed) {
                   // Resetear estados
@@ -556,10 +558,7 @@ export default function QuizForm() {
       {/* Enlace a cuestionarios guardados */}
       <div className="mt-8 text-center">
         <p className="text-sm text-gray-600 mb-3">¿Quieres continuar un quiz anterior?</p>
-        <button
-          onClick={() => navigate('/saved-quizzes')}
-          className="btn btn-green-outline"
-        >
+        <button onClick={() => navigate("/saved-quizzes")} className="btn btn-green-outline">
           <BookOpen size={20} />
           Ver Mis Cuestionarios Guardados
         </button>
@@ -571,11 +570,7 @@ export default function QuizForm() {
           <motion.div className="mt-6 space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <h3 className="text-2xl font-bold text-indigo-600">📋 Previsualización</h3>
             {preview.map((q, i) => (
-              <motion.div
-                key={i}
-                className="preview-card"
-                whileHover={{ scale: 1.02 }}
-              >
+              <motion.div key={i} className="preview-card" whileHover={{ scale: 1.02 }}>
                 <div className="font-semibold_2">{q.question}</div>
                 {q.options && (
                   <ul className="list-disc ml-5 text-gray-700">
