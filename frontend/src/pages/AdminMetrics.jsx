@@ -26,6 +26,10 @@ export default function AdminMetrics() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
 
+  // ADDED: Voice Metrics state
+  const [voiceMetrics, setVoiceMetrics] = useState(null);
+  const [voiceLoading, setVoiceLoading] = useState(false);
+
   const fetchMetrics = async () => {
     setLoading(true);
     setErr(null);
@@ -45,8 +49,27 @@ export default function AdminMetrics() {
     }
   };
 
+  // ADDED: Voice Metrics fetch function
+  const fetchVoiceMetrics = async () => {
+    setVoiceLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (start) params.set("start", start);
+      if (end) params.set("end", end);
+      const url = `${API_BASE}/voice-metrics/summary/${params.toString() ? "?" + params.toString() : ""}`;
+      const resp = await fetch(url);
+      const json = await resp.json();
+      setVoiceMetrics(json);
+    } catch (e) {
+      console.error("Error loading voice metrics:", e);
+    } finally {
+      setVoiceLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchMetrics();
+    fetchVoiceMetrics(); // ADDED: Voice Metrics
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -97,7 +120,7 @@ export default function AdminMetrics() {
             />
           </div>
           <div className="am-actions">
-            <button className="btn-primary" onClick={fetchMetrics}>
+            <button className="btn-primary" onClick={() => { fetchMetrics(); fetchVoiceMetrics(); }}>
               Aplicar filtros
             </button>
             <a className="btn-ghost" href={exportHref}>
@@ -172,6 +195,131 @@ export default function AdminMetrics() {
             )}
           </section>
         </>
+      )}
+
+      {/* ADDED: Voice Metrics Section */}
+      <header className="am-header" style={{ marginTop: '3rem' }}>
+        <h1 className="am-title">Métricas de Voz</h1>
+        <p className="am-subtitle">
+          QGAI-108 · Métricas de STT/TTS, intenciones, fallbacks y sugerencias proactivas.
+        </p>
+      </header>
+
+      {voiceLoading && (
+        <div className="am-skeleton">
+          <div className="sk-line" />
+          <div className="sk-cards">
+            <div className="sk-card" />
+            <div className="sk-card" />
+            <div className="sk-card" />
+            <div className="sk-card" />
+          </div>
+        </div>
+      )}
+
+      {voiceMetrics && !voiceLoading && (
+        <>
+          {/* Latency KPIs */}
+          <section className="am-kpis">
+            <div className="kpi card-glass kpi-1">
+              <div className="kpi__label">STT Latencia p50</div>
+              <div className="kpi__value">{Math.round(voiceMetrics.stt_latency_p50_ms ?? 0)} ms</div>
+            </div>
+            <div className="kpi card-glass kpi-2">
+              <div className="kpi__label">STT Latencia p95</div>
+              <div className="kpi__value">{Math.round(voiceMetrics.stt_latency_p95_ms ?? 0)} ms</div>
+            </div>
+            <div className="kpi card-glass kpi-3">
+              <div className="kpi__label">TTS Latencia p50</div>
+              <div className="kpi__value">{Math.round(voiceMetrics.tts_latency_p50_ms ?? 0)} ms</div>
+            </div>
+            <div className="kpi card-glass kpi-4">
+              <div className="kpi__label">TTS Latencia p95</div>
+              <div className="kpi__value">{Math.round(voiceMetrics.tts_latency_p95_ms ?? 0)} ms</div>
+            </div>
+          </section>
+
+          {/* Intent & Interaction KPIs */}
+          <section className="am-kpis">
+            <div className="kpi card-glass kpi-1">
+              <div className="kpi__label">Intenciones Reconocidas</div>
+              <div className="kpi__value">{voiceMetrics.total_intents ?? 0}</div>
+            </div>
+            <div className="kpi card-glass kpi-2">
+              <div className="kpi__label">Confianza Promedio</div>
+              <div className="kpi__value">
+                {((voiceMetrics.intent_avg_confidence ?? 0) * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div className="kpi card-glass kpi-3">
+              <div className="kpi__label">Accuracy de Intenciones</div>
+              <div className="kpi__value">
+                {((voiceMetrics.intent_accuracy_rate ?? 0) * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div className="kpi card-glass kpi-4">
+              <div className="kpi__label">Barge-ins</div>
+              <div className="kpi__value">{voiceMetrics.barge_in_count ?? 0}</div>
+            </div>
+          </section>
+
+          {/* Fallback & Suggestions KPIs */}
+          <section className="am-kpis">
+            <div className="kpi card-glass kpi-1">
+              <div className="kpi__label">Fallbacks</div>
+              <div className="kpi__value">{voiceMetrics.fallback_count ?? 0}</div>
+            </div>
+            <div className="kpi card-glass kpi-2">
+              <div className="kpi__label">Tasa de Fallback</div>
+              <div className="kpi__value">
+                {((voiceMetrics.fallback_rate ?? 0) * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div className="kpi card-glass kpi-3">
+              <div className="kpi__label">Sugerencias Aceptadas</div>
+              <div className="kpi__value">
+                {voiceMetrics.suggestions_accepted ?? 0} / {voiceMetrics.suggestions_shown ?? 0}
+              </div>
+            </div>
+            <div className="kpi card-glass kpi-4">
+              <div className="kpi__label">Tasa de Aceptación</div>
+              <div className="kpi__value">
+                {((voiceMetrics.suggestion_accept_rate ?? 0) * 100).toFixed(1)}%
+              </div>
+            </div>
+          </section>
+
+          {/* Backend Distribution Table */}
+          <section className="am-block card-glass">
+            <h3 className="am-block__title">Distribución por Backend</h3>
+            {Object.entries(voiceMetrics?.backend_distribution || {}).length === 0 ? (
+              <div className="am-empty">Sin datos de uso de backends.</div>
+            ) : (
+              <table className="am-table">
+                <thead>
+                  <tr>
+                    <th>Backend</th>
+                    <th>Usos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(voiceMetrics?.backend_distribution || {}).map(([backend, count]) => (
+                    <tr key={backend}>
+                      <td style={{ textTransform: 'capitalize' }}>{backend}</td>
+                      <td>{count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </>
+      )}
+
+      {voiceMetrics && !voiceLoading && Object.keys(voiceMetrics).length === 0 && (
+        <div className="am-empty card-glass">
+          No hay datos de métricas de voz disponibles.
+        </div>
       )}
     </main>
   );
