@@ -6,6 +6,7 @@ import Swal from "sweetalert2";
 import "../estilos/QuizForm.css";
 import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
 import ModelProviderSelect from "../components/ModelProviderSelect";
+import { useVoiceCommands } from "../hooks/useVoiceCommands";
 
 const TAXONOMY = [
   "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
@@ -164,8 +165,10 @@ function AutocompleteSelect({ value, onChange, options, placeholder }) {
   );
 }
 
-export default function QuizForm() {
+export default function QuizForm(props) {
+  const { speak } = useVoiceCommands({ sessionId: props.sessionId });
   const { provider, headerName } = useModelProvider();
+  const { question, options } = props;
   const [topic, setTopic] = useState("");
   const [difficulty, setDifficulty] = useState("Fácil");
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
@@ -179,6 +182,11 @@ export default function QuizForm() {
 
   // Clave para localStorage
   const AUTOSAVE_KEY = "quizform_autosave";
+
+    const leerPregunta = async () => {
+    const texto = `${question?.title || "Pregunta"}. ${options?.map((o, i)=>`Opción ${i+1}: ${o}`).join(". ")}`;
+    try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
+ };
 
   // Cargar datos guardados al montar el componente
   useEffect(() => {
@@ -568,6 +576,21 @@ export default function QuizForm() {
       <AnimatePresence>
         {preview && (
           <motion.div className="mt-6 space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          {/* Botón para leer en voz alta la configuración general del quiz */}
+          <div className="mb-3">
+            <button
+              className="btn btn-green-outline"
+              onClick={async () => {
+                const tipos = Object.entries(types).filter(([,v]) => v).map(([k]) => k).join(", ");
+                const total = Object.entries(counts).reduce((acc,[k,v]) => acc + (types[k] ? Number(v||0) : 0), 0);
+                const texto = `Vas a crear un cuestionario sobre ${topic || "tema no definido"}, dificultad ${difficulty}. ` +
+                              `Tipos activos: ${tipos || "ninguno"}. Total de preguntas: ${total}.`;
+                try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
+              }}
+            >
+              🔊 Leer configuración del quiz
+            </button>
+          </div>
             <h3 className="text-2xl font-bold text-indigo-600">📋 Previsualización</h3>
             {preview.map((q, i) => (
               <motion.div key={i} className="preview-card" whileHover={{ scale: 1.02 }}>
@@ -583,6 +606,21 @@ export default function QuizForm() {
                   <CheckCircle size={16} /> {q.answer}
                 </div>
                 {q.explanation && <div className="text-xs text-gray-500">💡 {q.explanation}</div>}
+                {/* Botón TTS para leer esta pregunta del preview */}
+              <div className="mt-2">
+                <button
+                  className="btn btn-indigo"
+                  onClick={async () => {
+                    const texto = q.options?.length
+                      ? `${q.question}. ${q.options.map((o, j)=>`Opción ${j+1}: ${o}`).join(". ")}`
+                      : q.question;
+                    try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
+                  }}
+                  title="Leer esta pregunta en voz alta"
+                >
+                  🔊 Leer esta pregunta
+                </button>
+              </div>
               </motion.div>
             ))}
           </motion.div>

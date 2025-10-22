@@ -7,6 +7,8 @@ import jsPDF from "jspdf";
 import Swal from "sweetalert2";
 import "../estilos/QuizPlay.css";
 import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
+import { useVoiceCommands } from "../hooks/useVoiceCommands";
+import { recordAudioWithFallback } from "../utils/audioRecorder";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
@@ -187,8 +189,10 @@ const exportToTXT = (questions, answers, submitted) => {
   document.body.removeChild(element);
 };
 
-export default function QuizPlay() {
-  const { sessionId } = useParams();
+export default function QuizPlay(props) {
+  const { sessionId: routeSessionId } = useParams();
+  const sessionId = props?.sessionId ?? routeSessionId;
+  const { speak, transcribeBlob } = useVoiceCommands({ sessionId });
   const { provider, headerName } = useModelProvider();
   const navigate = useNavigate();
   const location = useLocation();
@@ -217,6 +221,63 @@ export default function QuizPlay() {
   const [history, setHistory] = useState({});
   // Borradores de regeneración pendientes de confirmar: { [idx]: question }
   const [regenDrafts, setRegenDrafts] = useState({});
+
+  const leerPreguntaActual = async () => {
+    const q = questions[currentQuestionIndex];
+    if (!q) return;
+    const enunciado = q.text || q.question;
+    const texto = Array.isArray(q.options) && q.options.length
+      ? `${enunciado}. ${q.options.map((o, j) => `Opción ${j + 1}: ${o}`).join(". ")}`
+      : enunciado;
+    try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
+  };
+
+  // Helpers para mapear STT -> respuesta
+  const _mapChoiceFromText = (t) => {
+    const s = (t || "").toLowerCase();
+    if (/\b[a-d]\b/.test(s)) return s.match(/\b([a-d])\b/)[1].toUpperCase();
+    if (/\b[1-4]\b/.test(s)) {
+      const n = parseInt(s.match(/\b([1-4])\b/)[1], 10);
+      return String.fromCharCode("A".charCodeAt(0) + (n - 1));
+    }
+    if (s.includes("primera")) return "A";
+    if (s.includes("segunda")) return "B";
+    if (s.includes("tercera")) return "C";
+    if (s.includes("cuarta")) return "D";
+    return null;
+  };
+
+  const _mapVF = (t) => {
+    const s = (t || "").toLowerCase();
+    if (/(verdadero|cierto|correcto|sí|si)/.test(s)) return true;
+    if (/(falso|incorrecto|no)/.test(s)) return false;
+    return null;
+  };
+
+  const dictarRespuesta = async () => {
+    try {
+      const { blob, fmt } = await recordAudioWithFallback(4);
+      const out = await transcribeBlob(blob, { language: "es-ES", fmt });
+      const heard = out?.text || "";
+      const q = questions[currentQuestionIndex];
+      if (!q) return;
+
+      if (q.type === "mcq") {
+        const choice = _mapChoiceFromText(heard);
+        setAnswers(prev => ({ ...prev, [currentQuestionIndex]: choice || heard }));
+      } else if (q.type === "vf") {
+        const bool = _mapVF(heard);
+        if (bool !== null) setAnswers(prev => ({ ...prev, [currentQuestionIndex]: bool }));
+      } else {
+        setAnswers(prev => ({ ...prev, [currentQuestionIndex]: heard }));
+      }
+    } catch (e) {
+      console.error("STT error", e);
+      alert("No se pudo grabar audio en este navegador. Revisa permisos o prueba en Chrome/Edge.");
+    }
+  };
+
+
 
   useEffect(() => {
     let alive = true;
@@ -902,421 +963,421 @@ export default function QuizPlay() {
     );
   }
 
-  return (
-    <main className="shell qp-root">
-      <header className="hero qp-header">
-        <div className="qp-header-content">
-          <div className="qp-title-section">
-            <h1>{isLoadedQuiz && quizTitle ? quizTitle : "Tu Quiz"}</h1>
-            <p>
-              Responde las preguntas. Cuando termines, presiona "Calificar".
+return (
+  <main className="shell qp-root">
+    <header className="hero qp-header">
+      <div className="qp-header-content">
+        <div className="qp-title-section">
+          <h1>{isLoadedQuiz && quizTitle ? quizTitle : "Tu Quiz"}</h1>
+          <p>
+            Responde las preguntas. Cuando termines, presiona "Calificar".
+          </p>
+          {warning && <p className="qp-warning">⚠️ {warning}</p>}
+          {isLoadedQuiz && (
+            <p className="qp-saved-info">
+              💾 Quiz guardado - Se guarda automáticamente tu progreso
             </p>
-            {warning && <p className="qp-warning">⚠️ {warning}</p>}
-            {isLoadedQuiz && (
-              <p className="qp-saved-info">
-                💾 Quiz guardado - Se guarda automáticamente tu progreso
-              </p>
-            )}
-          </div>
-
-          {/* Botones de acción */}
-          <div className="qp-action-buttons">
-            <button
-              className="btn btn-primary"
-              onClick={() => navigate("/")}
-              title="Volver al inicio"
-            >
-              🏠 Inicio
-            </button>
-
-            {!submitted && (
-              <button
-                className="btn btn-save"
-                onClick={() => saveQuizProgress()}
-                disabled={saving}
-                title="Guardar progreso del quiz"
-              >
-                <Save size={16} />
-                {saving
-                  ? "Guardando..."
-                  : isLoadedQuiz
-                  ? "Guardar"
-                  : "Guardar Quiz"}
-              </button>
-            )}
-
-            <button
-              className="btn btn-secondary"
-              onClick={() => navigate("/saved-quizzes")}
-              title="Ver cuestionarios guardados"
-            >
-              <BookOpen size={16} />
-              Mis Quizzes
-            </button>
-          </div>
-        </div>
-
-        {/* Botones de exportación */}
-        <div className="qp-export-buttons">
-          <button
-            className="btn btn-export btn-pdf"
-            onClick={() => exportToPDF(questions, answers, submitted)}
-            title="Exportar quiz a PDF"
-          >
-            📄 Exportar PDF
-          </button>
-          <button
-            className="btn btn-export btn-txt"
-            onClick={() => exportToTXT(questions, answers, submitted)}
-            title="Exportar quiz a TXT"
-          >
-            📝 Exportar TXT
-          </button>
-        </div>
-      </header>
-
-      <section className="card">
-        <div className="qp-body">
-          <AnimatePresence>
-            {questions.map((q, idx) => {
-              const draft = regenDrafts[idx];
-              return (
-                <motion.div
-                  key={idx}
-                  className="qp-question"
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <div className="qp-title">
-                    {idx + 1}. {q.question}
-                  </div>
-
-                  {/* MCQ */}
-                  {q.type === "mcq" && Array.isArray(q.options) && (
-                    <div className="qp-options">
-                      {q.options.map((opt, i) => {
-                        const letter = String.fromCharCode(
-                          "A".charCodeAt(0) + i
-                        );
-                        const selected =
-                          (answers[idx] ?? "")
-                            .toString()
-                            .toUpperCase()
-                            .charAt(0) === letter;
-                        return (
-                          <label
-                            key={i}
-                            className={`qp-option ${
-                              selected ? "is-selected" : ""
-                            }`}
-                            onClick={() => handleSelectMCQ(idx, i)}
-                          >
-                            <span className="qp-badge">{letter}</span>
-                            <span className="qp-text">
-                              {opt.replace(/^[A-D]\)\s*/i, "")}
-                            </span>
-                            <input
-                              type="radio"
-                              name={`q${idx}`}
-                              className="qp-radio"
-                              checked={selected}
-                              readOnly
-                            />
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* V/F */}
-                  {q.type === "vf" && (
-                    <div
-                      className="qp-options"
-                      style={{ gridTemplateColumns: "1fr 1fr" }}
-                    >
-                      <label
-                        className={`qp-option ${
-                          answers[idx] === true ? "is-selected" : ""
-                        }`}
-                        onClick={() => handleToggleVF(idx, true)}
-                      >
-                        <span className="qp-text">Verdadero</span>
-                        <input
-                          type="radio"
-                          name={`q${idx}-vf`}
-                          className="qp-radio"
-                          checked={answers[idx] === true}
-                          readOnly
-                        />
-                      </label>
-                      <label
-                        className={`qp-option ${
-                          answers[idx] === false ? "is-selected" : ""
-                        }`}
-                        onClick={() => handleToggleVF(idx, false)}
-                      >
-                        <span className="qp-text">Falso</span>
-                        <input
-                          type="radio"
-                          name={`q${idx}-vf`}
-                          className="qp-radio"
-                          checked={answers[idx] === false}
-                          readOnly
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {/* Respuesta corta */}
-                  {q.type === "short" && (
-                    <textarea
-                      rows={3}
-                      className="qp-short"
-                      placeholder="Escribe tu respuesta..."
-                      value={answers[idx] || ""}
-                      onChange={(e) => handleShortChange(idx, e.target.value)}
-                    />
-                  )}
-
-                  {/* Acciones por pregunta */}
-                  <div className="qp-actions">
-                    {/* 🔵 Botón duplicar */}
-                    <button
-                      className="btn btn-yellow"
-                      onClick={() => handleDuplicateQuestion(idx)}
-                      title="Duplicar esta pregunta"
-                    >
-                      📄 Duplicar
-                    </button>
-
-                    {/* 🔴 Botón eliminar */}
-                    <button
-                      className="btn btn-red"
-                      onClick={() => handleDeleteQuestion(idx)}
-                      title="Eliminar esta pregunta"
-                    >
-                      🗑️ Eliminar
-                    </button>
-
-                    {!draft ? (
-                      <button
-                        className="btn btn-indigo"
-                        onClick={() => handleStartRegenerate(idx)}
-                        title="Regenerar esta pregunta"
-                      >
-                        🔄 Regenerar
-                      </button>
-                    ) : (
-                      <>
-                        <span className="qp-regen-note">
-                          Nueva variante lista
-                        </span>
-                        <button
-                          className="btn btn-black"
-                          onClick={() => handleRegenerateAgain(idx)}
-                        >
-                          Regenerar de nuevo
-                        </button>
-                        <button
-                          className="btn btn-green"
-                          onClick={() => handleConfirmReplace(idx)}
-                        >
-                          Reemplazar
-                        </button>
-                        <button
-                          className="btn btn-red"
-                          onClick={() => handleCancelRegenerate(idx)}
-                        >
-                          Cancelar
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Panel de borrador (vista previa de la variante) */}
-                  {draft && (
-                    <div className="qp-regen">
-                      <div className="qp-regen__title">
-                        Vista previa de variante
-                      </div>
-                      <div className="qp-regen__q">{draft.question}</div>
-                      {Array.isArray(draft.options) && (
-                        <ul className="qp-regen__list">
-                          {draft.options.map((o, i) => (
-                            <li key={i}>{o}</li>
-                          ))}
-                        </ul>
-                      )}
-                      {draft.explanation && (
-                        <div className="qp-regen__expl">
-                          💡 {draft.explanation}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Solución al enviar */}
-                  {submitted && (
-                    <div className="qp-solution">
-                      <div className="qp-expected">
-                        <b>Respuesta esperada:</b>{" "}
-                        {q.type === "vf"
-                          ? q.answer
-                          : q.type === "mcq"
-                          ? q.answer
-                          : q.answer}
-                      </div>
-                      {q.explanation && (
-                        <div className="qp-expl">💡 {q.explanation}</div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Historial opcional (colapsado simple) */}
-                  {Array.isArray(history[idx]) && history[idx].length > 1 && (
-                    <details className="qp-history">
-                      <summary>
-                        Ver historial ({history[idx].length} versiones)
-                      </summary>
-                      <ol>
-                        {history[idx].map((v, vi) => (
-                          <li key={vi}>
-                            <b>v{vi}:</b> {v.question}
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  )}
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
-        </div>
-
-        <div className="qp-actions">
-          {!submitted ? (
-            <>
-              <button className="btn btn-green" onClick={submitQuiz}>
-                Calificar
-              </button>
-              <button className="btn btn-indigo" onClick={() => navigate("/")}>
-                Volver al inicio
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="btn btn-indigo" onClick={resetQuiz}>
-                Reintentar
-              </button>
-              <button className="btn btn-indigo" onClick={() => navigate("/")}>
-                Volver al inicio
-              </button>
-            </>
           )}
         </div>
 
-        {submitted && (
-          <motion.div
-            className="qp-detailed-results"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
+        {/* Botones de acción */}
+        <div className="qp-action-buttons">
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate("/")}
+            title="Volver al inicio"
           >
-            {/* Resumen general */}
-            <div className="results-header">
-              <h3>🎉 ¡Quiz completado!</h3>
-              <div className="overall-score">
-                <span className="score-big">{detailedScoring.percentage}%</span>
-                <span className="score-fraction">
-                  {detailedScoring.correct} de {detailedScoring.total} correctas
-                </span>
-              </div>
-            </div>
+            🏠 Inicio
+          </button>
 
-            {/* Análisis por tipo */}
-            <div className="results-by-type">
-              <h4>📊 Análisis por tipo de pregunta</h4>
-              <div className="type-grid">
-                {Object.entries(detailedScoring.byType).map(([type, data]) => {
-                  if (data.total === 0) return null;
-                  return (
-                    <div key={type} className="type-card">
-                      <div className="type-name">
-                        {type === "mcq"
-                          ? "🔄 Opción múltiple"
-                          : type === "vf"
-                          ? "✅ Verdadero/Falso"
-                          : "📝 Respuesta corta"}
-                      </div>
-                      <div className="type-score">{data.percentage}%</div>
-                      <div className="type-details">
-                        {data.correct}/{data.total}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+          {!submitted && (
+            <button
+              className="btn btn-save"
+              onClick={() => saveQuizProgress()}
+              disabled={saving}
+              title="Guardar progreso del quiz"
+            >
+              <Save size={16} />
+              {saving
+                ? "Guardando..."
+                : isLoadedQuiz
+                ? "Guardar"
+                : "Guardar Quiz"}
+            </button>
+          )}
 
-            {/* Reintento */}
-            <div className="results-actions">
-              <button className="btn btn-retry" onClick={retryQuiz}>
-                🔄 Reintentar Quiz
-              </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => navigate("/saved-quizzes")}
+            title="Ver cuestionarios guardados"
+          >
+            <BookOpen size={16} />
+            Mis Quizzes
+          </button>
+        </div>
+      </div>
 
-              <button
-                className="btn btn-new"
-                onClick={() => navigate("/saved-quizzes")}
+      {/* Botones de exportación */}
+      <div className="qp-export-buttons">
+        <button
+          className="btn btn-export btn-pdf"
+          onClick={() => exportToPDF(questions, answers, submitted)}
+          title="Exportar quiz a PDF"
+        >
+          📄 Exportar PDF
+        </button>
+        <button
+          className="btn btn-export btn-txt"
+          onClick={() => exportToTXT(questions, answers, submitted)}
+          title="Exportar quiz a TXT"
+        >
+          📝 Exportar TXT
+        </button>
+      </div>
+    </header>
+
+    <section className="card">
+      <div className="qp-body">
+        {/* 🎤 Controles de voz para la pregunta actual */}
+        <div
+          className="voice-controls"
+          style={{ display: "flex", gap: 8, marginBottom: 12 }}
+        >
+          <button className="btn btn-indigo" onClick={leerPreguntaActual}>
+            🔊 Leer pregunta
+          </button>
+          <button
+            className="btn btn-green-outline"
+            onClick={dictarRespuesta}
+          >
+            🎙️ Dictar respuesta
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {questions.map((q, idx) => {
+            const draft = regenDrafts[idx];
+            return (
+              <motion.div
+                key={idx}
+                className="qp-question"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
               >
-                📚 Ver mis quizzes
-              </button>
-            </div>
+                <div className="qp-title">
+                  {idx + 1}. {q.question}
+                </div>
 
-            {/* Detalle pregunta por pregunta (opcional, colapsable) */}
-            <details className="question-breakdown">
-              <summary>🔍 Ver detalle por pregunta</summary>
-              <div className="breakdown-list">
-                {detailedScoring.questionDetails.map((detail, idx) => (
+                {/* MCQ */}
+                {q.type === "mcq" && Array.isArray(q.options) && (
+                  <div className="qp-options">
+                    {q.options.map((opt, i) => {
+                      const letter = String.fromCharCode("A".charCodeAt(0) + i);
+                      const selected =
+                        (answers[idx] ?? "")
+                          .toString()
+                          .toUpperCase()
+                          .charAt(0) === letter;
+                      return (
+                        <label
+                          key={i}
+                          className={`qp-option ${
+                            selected ? "is-selected" : ""
+                          }`}
+                          onClick={() => handleSelectMCQ(idx, i)}
+                        >
+                          <span className="qp-badge">{letter}</span>
+                          <span className="qp-text">
+                            {opt.replace(/^[A-D]\)\s*/i, "")}
+                          </span>
+                          <input
+                            type="radio"
+                            name={`q${idx}`}
+                            className="qp-radio"
+                            checked={selected}
+                            readOnly
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* V/F */}
+                {q.type === "vf" && (
                   <div
-                    key={idx}
-                    className={`breakdown-item ${
-                      detail.isCorrect
-                        ? "correct"
-                        : detail.hasAnswer
-                        ? "incorrect"
-                        : "unanswered"
-                    }`}
+                    className="qp-options"
+                    style={{ gridTemplateColumns: "1fr 1fr" }}
                   >
-                    <span className="q-number">#{idx + 1}</span>
-                    <span className="q-type">
-                      {detail.type === "mcq"
-                        ? "🔄"
-                        : detail.type === "vf"
-                        ? "✅"
-                        : "📝"}
-                    </span>
-                    <span className="q-status">
-                      {!detail.hasAnswer
-                        ? "⚪ Sin respuesta"
-                        : detail.isCorrect
-                        ? "✅ Correcto"
-                        : "❌ Incorrecto"}
-                    </span>
-                    {detail.hasAnswer && !detail.isCorrect && (
-                      <div className="q-correction">
-                        <small>Tu respuesta: {String(detail.userAnswer)}</small>
-                        <br />
-                        <small>Correcta: {String(detail.correctAnswer)}</small>
-                      </div>
+                    <label
+                      className={`qp-option ${
+                        answers[idx] === true ? "is-selected" : ""
+                      }`}
+                      onClick={() => handleToggleVF(idx, true)}
+                    >
+                      <span className="qp-text">Verdadero</span>
+                      <input
+                        type="radio"
+                        name={`q${idx}-vf`}
+                        className="qp-radio"
+                        checked={answers[idx] === true}
+                        readOnly
+                      />
+                    </label>
+                    <label
+                      className={`qp-option ${
+                        answers[idx] === false ? "is-selected" : ""
+                      }`}
+                      onClick={() => handleToggleVF(idx, false)}
+                    >
+                      <span className="qp-text">Falso</span>
+                      <input
+                        type="radio"
+                        name={`q${idx}-vf`}
+                        className="qp-radio"
+                        checked={answers[idx] === false}
+                        readOnly
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* Respuesta corta */}
+                {q.type === "short" && (
+                  <textarea
+                    rows={3}
+                    className="qp-short"
+                    placeholder="Escribe tu respuesta..."
+                    value={answers[idx] || ""}
+                    onChange={(e) => handleShortChange(idx, e.target.value)}
+                  />
+                )}
+
+                {/* Acciones por pregunta */}
+                <div className="qp-actions">
+                  {/* 🔵 Botón duplicar */}
+                  <button
+                    className="btn btn-yellow"
+                    onClick={() => handleDuplicateQuestion(idx)}
+                    title="Duplicar esta pregunta"
+                  >
+                    📄 Duplicar
+                  </button>
+
+                  {/* 🔴 Botón eliminar */}
+                  <button
+                    className="btn btn-red"
+                    onClick={() => handleDeleteQuestion(idx)}
+                    title="Eliminar esta pregunta"
+                  >
+                    🗑️ Eliminar
+                  </button>
+
+                  {!draft ? (
+                    <button
+                      className="btn btn-indigo"
+                      onClick={() => handleStartRegenerate(idx)}
+                      title="Regenerar esta pregunta"
+                    >
+                      🔄 Regenerar
+                    </button>
+                  ) : (
+                    <>
+                      <span className="qp-regen-note">Nueva variante lista</span>
+                      <button
+                        className="btn btn-black"
+                        onClick={() => handleRegenerateAgain(idx)}
+                      >
+                        Regenerar de nuevo
+                      </button>
+                      <button
+                        className="btn btn-green"
+                        onClick={() => handleConfirmReplace(idx)}
+                      >
+                        Reemplazar
+                      </button>
+                      <button
+                        className="btn btn-red"
+                        onClick={() => handleCancelRegenerate(idx)}
+                      >
+                        Cancelar
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Panel de borrador (vista previa de la variante) */}
+                {draft && (
+                  <div className="qp-regen">
+                    <div className="qp-regen__title">Vista previa de variante</div>
+                    <div className="qp-regen__q">{draft.question}</div>
+                    {Array.isArray(draft.options) && (
+                      <ul className="qp-regen__list">
+                        {draft.options.map((o, i) => (
+                          <li key={i}>{o}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {draft.explanation && (
+                      <div className="qp-regen__expl">💡 {draft.explanation}</div>
                     )}
                   </div>
-                ))}
-              </div>
-            </details>
-          </motion.div>
+                )}
+
+                {/* Solución al enviar */}
+                {submitted && (
+                  <div className="qp-solution">
+                    <div className="qp-expected">
+                      <b>Respuesta esperada:</b>{" "}
+                      {q.type === "vf"
+                        ? q.answer
+                        : q.type === "mcq"
+                        ? q.answer
+                        : q.answer}
+                    </div>
+                    {q.explanation && (
+                      <div className="qp-expl">💡 {q.explanation}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Historial opcional (colapsado simple) */}
+                {Array.isArray(history[idx]) && history[idx].length > 1 && (
+                  <details className="qp-history">
+                    <summary>Ver historial ({history[idx].length} versiones)</summary>
+                    <ol>
+                      {history[idx].map((v, vi) => (
+                        <li key={vi}>
+                          <b>v{vi}:</b> {v.question}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+
+      <div className="qp-actions">
+        {!submitted ? (
+          <>
+            <button className="btn btn-green" onClick={submitQuiz}>
+              Calificar
+            </button>
+            <button className="btn btn-indigo" onClick={() => navigate("/")}>
+              Volver al inicio
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="btn btn-indigo" onClick={resetQuiz}>
+              Reintentar
+            </button>
+            <button className="btn btn-indigo" onClick={() => navigate("/")}>
+              Volver al inicio
+            </button>
+          </>
         )}
-      </section>
-    </main>
-  );
+      </div>
+
+      {submitted && (
+        <motion.div
+          className="qp-detailed-results"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          {/* Resumen general */}
+          <div className="results-header">
+            <h3>🎉 ¡Quiz completado!</h3>
+            <div className="overall-score">
+              <span className="score-big">{detailedScoring.percentage}%</span>
+              <span className="score-fraction">
+                {detailedScoring.correct} de {detailedScoring.total} correctas
+              </span>
+            </div>
+          </div>
+
+          {/* Análisis por tipo */}
+          <div className="results-by-type">
+            <h4>📊 Análisis por tipo de pregunta</h4>
+            <div className="type-grid">
+              {Object.entries(detailedScoring.byType).map(([type, data]) => {
+                if (data.total === 0) return null;
+                return (
+                  <div key={type} className="type-card">
+                    <div className="type-name">
+                      {type === "mcq"
+                        ? "🔄 Opción múltiple"
+                        : type === "vf"
+                        ? "✅ Verdadero/Falso"
+                        : "📝 Respuesta corta"}
+                    </div>
+                    <div className="type-score">{data.percentage}%</div>
+                    <div className="type-details">
+                      {data.correct}/{data.total}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Reintento */}
+          <div className="results-actions">
+            <button className="btn btn-retry" onClick={retryQuiz}>
+              🔄 Reintentar Quiz
+            </button>
+
+            <button className="btn btn-new" onClick={() => navigate("/saved-quizzes")}>
+              📚 Ver mis quizzes
+            </button>
+          </div>
+
+          {/* Detalle pregunta por pregunta (opcional, colapsable) */}
+          <details className="question-breakdown">
+            <summary>🔍 Ver detalle por pregunta</summary>
+            <div className="breakdown-list">
+              {detailedScoring.questionDetails.map((detail, idx) => (
+                <div
+                  key={idx}
+                  className={`breakdown-item ${
+                    detail.isCorrect
+                      ? "correct"
+                      : detail.hasAnswer
+                      ? "incorrect"
+                      : "unanswered"
+                  }`}
+                >
+                  <span className="q-number">#{idx + 1}</span>
+                  <span className="q-type">
+                    {detail.type === "mcq" ? "🔄" : detail.type === "vf" ? "✅" : "📝"}
+                  </span>
+                  <span className="q-status">
+                    {!detail.hasAnswer
+                      ? "⚪ Sin respuesta"
+                      : detail.isCorrect
+                      ? "✅ Correcto"
+                      : "❌ Incorrecto"}
+                  </span>
+                  {detail.hasAnswer && !detail.isCorrect && (
+                    <div className="q-correction">
+                      <small>Tu respuesta: {String(detail.userAnswer)}</small>
+                      <br />
+                      <small>Correcta: {String(detail.correctAnswer)}</small>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </details>
+        </motion.div>
+      )}
+    </section>
+  </main>
+);
+
 }

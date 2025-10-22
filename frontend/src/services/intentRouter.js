@@ -5,9 +5,13 @@
  * Implementa QGAI-107: Router de intenciones con fallback
  */
 
+import { logIntentEvent } from "./voiceMetricsService";
+const API_BASE = process.env.REACT_APP_API_BASE || "/api";
+
+
 class IntentRouterService {
   constructor() {
-    this.baseUrl = '/api/intent-router';
+    this.baseUrl = `${API_BASE}/intent-router`;
     this.cache = new Map();
     this.cacheTimeout = 5 * 60 * 1000; // 5 minutos
   }
@@ -66,6 +70,16 @@ class IntentRouterService {
         warning: response.warning || null,
         timestamp: Date.now()
       };
+
+      // log de métricas (no bloquea UX)
+      logIntentEvent(
+        result.intent,
+        Number(result.confidence ?? 0),
+        String(result.backendUsed || "grammar"),
+        Number(result.latencyMs ?? 0),
+        result.slots || {},
+        { source: "frontend" }
+      ).catch(()=>{});
 
       // Cache result
       this.cache.set(cacheKey, {

@@ -1,9 +1,12 @@
 import { Routes, Route, useLocation, Link } from "react-router-dom";
 import "./App.css";
+import React, { useEffect, useState } from "react";
 import QuizForm from "./components/QuizForm";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
 import SavedQuizzes from "./components/SavedQuizzes";
+import { v4 as uuidv4 } from "uuid";
+import { setVoiceMetricsSession } from "./services/voiceMetricsService";
 
 // Proveedor/selector de modelo
 import { ModelProviderProvider } from "./ModelProviderContext";
@@ -15,6 +18,8 @@ import VoiceCommandPanel from "./components/VoiceCommands/VoiceCommandPanel";
 
 function App() {
   const location = useLocation();
+  const [sessionId] = React.useState(()=> uuidv4());
+  React.useEffect(()=> { setVoiceMetricsSession(sessionId); }, [sessionId]);
   const isPlay = location.pathname.startsWith("/quiz/");
   const isMetrics = location.pathname.startsWith("/admin/");
   const isSavedQuizzes = location.pathname === "/saved-quizzes";
@@ -83,7 +88,7 @@ function App() {
                   element={
                     <section className="card" style={{ padding: 16 }}>
                       <h2 style={{ marginTop: 0 }}>Comandos de Voz</h2>
-                      <VoiceCommandPanel onCommand={() => {}} />
+                      <VoiceCommandPanel sessionId={sessionId} />
                     </section>
                   }
                 />
@@ -100,7 +105,7 @@ function App() {
                 element={
                   <section className="card" style={{ padding: 16 }}>
                     <h2 style={{ marginTop: 0 }}>Comandos de Voz</h2>
-                    <VoiceCommandPanel onCommand={() => {}} />
+                    <VoiceCommandPanel sessionId={sessionId} />
                   </section>
                 }
               />

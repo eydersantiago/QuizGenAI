@@ -8,6 +8,12 @@ from .views_stt import stt_recognize
 from .views_saved_quizzes import (
     saved_quizzes, saved_quiz_detail, load_saved_quiz, quiz_statistics
 )
+from .views_intent_router import (
+    intent_health,
+    supported_intents,
+    parse_intent,
+    batch_parse_intents,
+)
 
 router = DefaultRouter()
 
@@ -38,6 +44,11 @@ urlpatterns = [
     path("voice/token/", voice_token, name="voice_token"),
     path("voice/tts/", tts_synthesize, name="tts_synthesize"),
     path("voice/stt/", stt_recognize, name="stt_recognize"),
+
+    path("intent-router/health/", intent_health, name="intent_health"),
+    path("intent-router/supported_intents/", supported_intents, name="supported_intents"),
+    path("intent-router/parse/", parse_intent, name="parse_intent"),
+    path("intent-router/batch_parse/", batch_parse_intents, name="batch_parse_intents"),
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
 ]
