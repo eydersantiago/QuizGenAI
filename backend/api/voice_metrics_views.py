@@ -196,3 +196,118 @@ def voice_metrics_export(request):
             {'error': 'Failed to export voice metrics'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# api/voice_metrics_views.py (al final del archivo)
+
+@api_view(['GET'])
+def voice_metrics_events(request):
+    """
+    GET /api/voice-metrics/events/
+    Lista eventos crudos con filtros y paginación.
+
+    Query params opcionales:
+      - start=YYYY-MM-DD
+      - end=YYYY-MM-DD
+      - event_type=stt_complete|stt_final|tts_complete|intent_recognized|...
+      - backend=azure|piper|...
+      - session_id=<uuid>
+      - limit=50 (por defecto)
+      - offset=0 (por defecto)
+
+    Respuesta:
+    {
+      "count": <total>,
+      "next_offset": <offset siguiente o null>,
+      "results": [
+        {
+          "id": 123,
+          "timestamp": "2025-10-22T12:34:56.123Z",
+          "event_type": "stt_complete",
+          "session_id": "...",
+          "latency_ms": 123,
+          "confidence": 0.92,
+          "intent": "generate_quiz",
+          "backend_used": "azure",
+          "text_length": 45,
+          "metadata": {...},
+          "user_id": 7
+        },
+        ...
+      ]
+    }
+    """
+    try:
+        start = request.GET.get('start')
+        end = request.GET.get('end')
+        event_type = request.GET.get('event_type')
+        backend = request.GET.get('backend')
+        session_id = request.GET.get('session_id')
+
+        try:
+            limit = int(request.GET.get('limit', 50))
+            limit = max(1, min(limit, 500))
+        except ValueError:
+            limit = 50
+
+        try:
+            offset = int(request.GET.get('offset', 0))
+            offset = max(0, offset)
+        except ValueError:
+            offset = 0
+
+        qs = VoiceMetricEvent.objects.all()
+
+        # Filtros de fecha
+        start_dt = None
+        end_dt = None
+        if start:
+            start_dt = start[:10]
+            qs = qs.filter(timestamp__gte=start_dt)
+        if end:
+            from datetime import datetime, timedelta
+            end_dt = end[:10]
+            try:
+                _end = datetime.strptime(end_dt, "%Y-%m-%d") + timedelta(days=1)
+                qs = qs.filter(timestamp__lt=_end)
+            except Exception:
+                pass
+
+        # Otros filtros
+        if event_type:
+            qs = qs.filter(event_type=event_type)
+        if backend:
+            qs = qs.filter(backend_used=backend)
+        if session_id:
+            qs = qs.filter(session_id=session_id)
+
+        total = qs.count()
+        qs = qs.order_by('-timestamp')[offset:offset + limit]
+
+        def serialize(ev: VoiceMetricEvent):
+            return {
+                "id": ev.id,
+                "timestamp": ev.timestamp.isoformat(),
+                "event_type": ev.event_type,
+                "session_id": str(ev.session_id) if ev.session_id else None,
+                "latency_ms": ev.latency_ms,
+                "confidence": ev.confidence,
+                "intent": ev.intent,
+                "backend_used": ev.backend_used,
+                "text_length": ev.text_length,
+                "metadata": ev.metadata or {},
+                "user_id": ev.user.id if ev.user_id else None,
+            }
+
+        results = [serialize(ev) for ev in qs]
+        next_offset = offset + limit if (offset + limit) < total else None
+
+        return JsonResponse({
+            "count": total,
+            "next_offset": next_offset,
+            "results": results
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error listing voice events: {str(e)}", exc_info=True)
+        return JsonResponse({'error': 'Failed to list events'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

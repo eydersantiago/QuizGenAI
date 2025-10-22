@@ -2,7 +2,7 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 from . import views
 from .views_metrics import metrics_summary, metrics_export
-from .voice_metrics_views import log_voice_event, voice_metrics_summary, voice_metrics_export
+from .voice_metrics_views import log_voice_event, voice_metrics_summary, voice_metrics_export, voice_metrics_events
 from .views_tts import voice_token, tts_synthesize
 from .views_stt import stt_recognize
 from .views_saved_quizzes import (
@@ -26,6 +26,7 @@ urlpatterns = [
     path("voice-metrics/log/", log_voice_event, name="log_voice_event"),
     path("voice-metrics/summary/", voice_metrics_summary, name="voice_metrics_summary"),
     path("voice-metrics/export/", voice_metrics_export, name="voice_metrics_export"),
+    path("voice-metrics/events/", voice_metrics_events, name="voice_metrics_events"),
 
     # Cuestionarios guardados (nueva funcionalidad)
     path("saved-quizzes/", saved_quizzes, name="saved_quizzes"),
