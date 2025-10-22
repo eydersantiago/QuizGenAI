@@ -197,6 +197,10 @@ export default function QuizPlay(props) {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Panel "voz" desplegable por pregunta (idx => boolean)
+  const [voiceOpen, setVoiceOpen] = useState({});
+  const toggleVoice = (idx) =>
+    setVoiceOpen((v) => ({ ...v, [idx]: !v[idx] }));
   const [loading, setLoading] = useState(true);
   const [warning, setWarning] = useState(null);
   const [error, setError] = useState(null);
@@ -474,6 +478,70 @@ export default function QuizPlay(props) {
     const letter = String.fromCharCode("A".charCodeAt(0) + optIdx);
     setAnswers((p) => ({ ...p, [idx]: letter }));
   };
+
+  // Leer una pregunta específica
+const readQuestion = async (idx) => {
+  const q = questions[idx];
+  if (!q) return;
+  const texto = q.options?.length
+    ? `${q.question}. ${q.options.map((o, j) => `Opción ${j + 1}: ${o}`).join(". ")}`
+    : q.question;
+  try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
+};
+
+// Dictar respuesta para una pregunta específica
+const dictateForQuestion = async (idx) => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    alert("Micrófono no soportado");
+    return;
+  }
+  try {
+    const { blob, fmt } = await recordAudioWithFallback(5);
+    const out = await transcribeBlob(blob, { language: "es-ES", fmt });
+
+    const spoken = (out?.text || "").trim();
+    if (!spoken) return;
+
+    const q = questions[idx];
+    if (!q) return;
+
+    // Heurística rápida según tipo
+    if (q.type === "short") {
+      setAnswers((p) => ({ ...p, [idx]: spoken }));
+      return;
+    }
+    if (q.type === "vf") {
+      const s = spoken.toLowerCase();
+      if (/^v(er)?d(er)?adero|^true/.test(s)) setAnswers((p) => ({ ...p, [idx]: true }));
+      else if (/^f(al)?so|^false/.test(s)) setAnswers((p) => ({ ...p, [idx]: false }));
+      else alert(`No entendí V/F: "${spoken}"`);
+      return;
+    }
+    if (q.type === "mcq") {
+      // Intentar mapear a A/B/C/D
+      const s = spoken.toLowerCase();
+      const map = { a: "A", b: "B", c: "C", d: "D" };
+      const matchLetter = s.match(/\b([a-d])\b/i);
+      if (matchLetter) {
+        setAnswers((p) => ({ ...p, [idx]: map[matchLetter[1].toLowerCase()] }));
+        return;
+      }
+      // alternativa: "opción 1/2/3/4"
+      const matchNum = s.match(/\b(opcion|opción)?\s*(\d)\b/i);
+      if (matchNum) {
+        const n = parseInt(matchNum[2], 10);
+        if (n >= 1 && n <= 4) {
+          setAnswers((p) => ({ ...p, [idx]: String.fromCharCode(64 + n) })); // 1->A
+          return;
+        }
+      }
+      alert(`No entendí la opción (A/B/C/D) en: "${spoken}"`);
+    }
+  } catch (e) {
+    console.error("STT error", e);
+    alert("No se pudo transcribir. Revisa permisos de micrófono.");
+  }
+};
 
   const handleToggleVF = (idx, val) => {
     setAnswers((p) => ({ ...p, [idx]: val }));
@@ -969,14 +1037,10 @@ return (
       <div className="qp-header-content">
         <div className="qp-title-section">
           <h1>{isLoadedQuiz && quizTitle ? quizTitle : "Tu Quiz"}</h1>
-          <p>
-            Responde las preguntas. Cuando termines, presiona "Calificar".
-          </p>
+          <p>Responde las preguntas. Cuando termines, presiona "Calificar".</p>
           {warning && <p className="qp-warning">⚠️ {warning}</p>}
           {isLoadedQuiz && (
-            <p className="qp-saved-info">
-              💾 Quiz guardado - Se guarda automáticamente tu progreso
-            </p>
+            <p className="qp-saved-info">💾 Quiz guardado - Se guarda automáticamente tu progreso</p>
           )}
         </div>
 
@@ -998,11 +1062,7 @@ return (
               title="Guardar progreso del quiz"
             >
               <Save size={16} />
-              {saving
-                ? "Guardando..."
-                : isLoadedQuiz
-                ? "Guardar"
-                : "Guardar Quiz"}
+              {saving ? "Guardando..." : isLoadedQuiz ? "Guardar" : "Guardar Quiz"}
             </button>
           )}
 
@@ -1038,25 +1098,15 @@ return (
 
     <section className="card">
       <div className="qp-body">
-        {/* 🎤 Controles de voz para la pregunta actual */}
-        <div
-          className="voice-controls"
-          style={{ display: "flex", gap: 8, marginBottom: 12 }}
-        >
-          <button className="btn btn-indigo" onClick={leerPreguntaActual}>
-            🔊 Leer pregunta
-          </button>
-          <button
-            className="btn btn-green-outline"
-            onClick={dictarRespuesta}
-          >
-            🎙️ Dictar respuesta
-          </button>
-        </div>
-
         <AnimatePresence>
           {questions.map((q, idx) => {
             const draft = regenDrafts[idx];
+            const selectedLetter =
+              (answers[idx] ?? "")
+                .toString()
+                .toUpperCase()
+                .charAt(0);
+
             return (
               <motion.div
                 key={idx}
@@ -1069,22 +1119,38 @@ return (
                   {idx + 1}. {q.question}
                 </div>
 
+                {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
+                <div className="qp-voice-row">
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => toggleVoice(idx)}
+                    title="Controles de voz"
+                  >
+                    🎤 Voz {voiceOpen[idx] ? "▴" : "▾"}
+                  </button>
+
+                  {voiceOpen[idx] && (
+                    <div className="qp-voice-panel">
+                      <button className="btn btn-indigo" onClick={() => readQuestion(idx)}>
+                        🔊 Leer
+                      </button>
+                      <button className="btn btn-green-outline" onClick={() => dictateForQuestion(idx)}>
+                        🎙️ Dictar
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {/* MCQ */}
                 {q.type === "mcq" && Array.isArray(q.options) && (
                   <div className="qp-options">
                     {q.options.map((opt, i) => {
                       const letter = String.fromCharCode("A".charCodeAt(0) + i);
-                      const selected =
-                        (answers[idx] ?? "")
-                          .toString()
-                          .toUpperCase()
-                          .charAt(0) === letter;
+                      const selected = selectedLetter === letter;
                       return (
                         <label
                           key={i}
-                          className={`qp-option ${
-                            selected ? "is-selected" : ""
-                          }`}
+                          className={`qp-option ${selected ? "is-selected" : ""}`}
                           onClick={() => handleSelectMCQ(idx, i)}
                         >
                           <span className="qp-badge">{letter}</span>
@@ -1106,14 +1172,9 @@ return (
 
                 {/* V/F */}
                 {q.type === "vf" && (
-                  <div
-                    className="qp-options"
-                    style={{ gridTemplateColumns: "1fr 1fr" }}
-                  >
+                  <div className="qp-options" style={{ gridTemplateColumns: "1fr 1fr" }}>
                     <label
-                      className={`qp-option ${
-                        answers[idx] === true ? "is-selected" : ""
-                      }`}
+                      className={`qp-option ${answers[idx] === true ? "is-selected" : ""}`}
                       onClick={() => handleToggleVF(idx, true)}
                     >
                       <span className="qp-text">Verdadero</span>
@@ -1126,9 +1187,7 @@ return (
                       />
                     </label>
                     <label
-                      className={`qp-option ${
-                        answers[idx] === false ? "is-selected" : ""
-                      }`}
+                      className={`qp-option ${answers[idx] === false ? "is-selected" : ""}`}
                       onClick={() => handleToggleVF(idx, false)}
                     >
                       <span className="qp-text">Falso</span>
@@ -1156,7 +1215,6 @@ return (
 
                 {/* Acciones por pregunta */}
                 <div className="qp-actions">
-                  {/* 🔵 Botón duplicar */}
                   <button
                     className="btn btn-yellow"
                     onClick={() => handleDuplicateQuestion(idx)}
@@ -1165,7 +1223,6 @@ return (
                     📄 Duplicar
                   </button>
 
-                  {/* 🔴 Botón eliminar */}
                   <button
                     className="btn btn-red"
                     onClick={() => handleDeleteQuestion(idx)}
@@ -1230,19 +1287,13 @@ return (
                   <div className="qp-solution">
                     <div className="qp-expected">
                       <b>Respuesta esperada:</b>{" "}
-                      {q.type === "vf"
-                        ? q.answer
-                        : q.type === "mcq"
-                        ? q.answer
-                        : q.answer}
+                      {q.type === "vf" ? q.answer : q.type === "mcq" ? q.answer : q.answer}
                     </div>
-                    {q.explanation && (
-                      <div className="qp-expl">💡 {q.explanation}</div>
-                    )}
+                    {q.explanation && <div className="qp-expl">💡 {q.explanation}</div>}
                   </div>
                 )}
 
-                {/* Historial opcional (colapsado simple) */}
+                {/* Historial */}
                 {Array.isArray(history[idx]) && history[idx].length > 1 && (
                   <details className="qp-history">
                     <summary>Ver historial ({history[idx].length} versiones)</summary>
@@ -1337,7 +1388,7 @@ return (
             </button>
           </div>
 
-          {/* Detalle pregunta por pregunta (opcional, colapsable) */}
+          {/* Detalle por pregunta */}
           <details className="question-breakdown">
             <summary>🔍 Ver detalle por pregunta</summary>
             <div className="breakdown-list">
@@ -1345,11 +1396,7 @@ return (
                 <div
                   key={idx}
                   className={`breakdown-item ${
-                    detail.isCorrect
-                      ? "correct"
-                      : detail.hasAnswer
-                      ? "incorrect"
-                      : "unanswered"
+                    detail.isCorrect ? "correct" : detail.hasAnswer ? "incorrect" : "unanswered"
                   }`}
                 >
                   <span className="q-number">#{idx + 1}</span>

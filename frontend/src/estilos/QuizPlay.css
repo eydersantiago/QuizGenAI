@@ -723,4 +723,33 @@
   }
 }
 
+.qp-voice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+
+.qp-voice-panel {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.btn.btn-ghost {
+  background: transparent;
+  border: 1px dashed var(--qp-border, #e5e7eb);
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.qp-voice-row { display:flex; gap:.5rem; margin:.5rem 0 0.75rem; }
+.qp-voice-panel { display:flex; gap:.5rem; }
+.btn.btn-ghost {     background: #00e5ff;
+    border: 1px solid var(--border, #496cb0);
+    border-radius: 8px;
+    padding: 6px 10px; }
+
+
+
 
