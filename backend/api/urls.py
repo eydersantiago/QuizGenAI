@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 from . import views
 from .views_metrics import metrics_summary, metrics_export
 from .voice_metrics_views import log_voice_event, voice_metrics_summary, voice_metrics_export
+from .views_tts import voice_token, tts_synthesize
+from .views_stt import stt_recognize
 from .views_saved_quizzes import (
     saved_quizzes, saved_quiz_detail, load_saved_quiz, quiz_statistics
 )
@@ -30,6 +32,11 @@ urlpatterns = [
     path("saved-quizzes/<uuid:quiz_id>/", saved_quiz_detail, name="saved_quiz_detail"),
     path("saved-quizzes/<uuid:quiz_id>/load/", load_saved_quiz, name="load_saved_quiz"),
     path("saved-quizzes/statistics/", quiz_statistics, name="quiz_statistics"),
+
+    #Para TTS y STT con Azure
+    path("voice/token/", voice_token, name="voice_token"),
+    path("voice/tts/", tts_synthesize, name="tts_synthesize"),
+    path("voice/stt/", stt_recognize, name="stt_recognize"),
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
 ]
