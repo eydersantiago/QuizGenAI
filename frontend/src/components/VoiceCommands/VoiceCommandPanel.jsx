@@ -11,6 +11,74 @@ import MicMeter from './MicMeter';
 import { recordAudioWithFallback } from '../../utils/audioRecorder';
 import { startAzureSTT } from '../../voice/azureClientSST';
 
+
+// --- Helpers para convertir a WAV PCM16 (copiados de QuizPlay y simplificados) ---
+function audioBufferToWavPcm16(buffer) {
+  const numOfChan = buffer.numberOfChannels;
+  const length = buffer.length * numOfChan * 2 + 44;
+  const sampleRate = buffer.sampleRate;
+  const out = new ArrayBuffer(length);
+  const view = new DataView(out);
+
+  let offset = 0;
+  const writeString = (s) => { for (let i = 0; i < s.length; i++) view.setUint8(offset++, s.charCodeAt(i)); };
+  const write16 = (d) => { view.setUint16(offset, d, true); offset += 2; };
+  const write32 = (d) => { view.setUint32(offset, d, true); offset += 4; };
+
+  // Header WAV
+  writeString('RIFF');
+  write32(length - 8);
+  writeString('WAVE');
+  writeString('fmt ');
+  write32(16);
+  write16(1); // PCM
+  write16(numOfChan);
+  write32(sampleRate);
+  write32(sampleRate * numOfChan * 2);
+  write16(numOfChan * 2);
+  write16(16); // 16-bit
+  writeString('data');
+  write32(length - offset - 4);
+
+  // Interleave + PCM16
+  const channels = [];
+  for (let i = 0; i < numOfChan; i++) channels.push(buffer.getChannelData(i));
+
+  const interleaved = new Float32Array(buffer.length * numOfChan);
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numOfChan; ch++) {
+      interleaved[i * numOfChan + ch] = channels[ch][i];
+    }
+  }
+  for (let i = 0; i < interleaved.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, interleaved[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+async function webmOrOggToWav(blob) {
+  const arrayBuf = await blob.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
+  const wavBlob = audioBufferToWavPcm16(decoded);
+  try { ctx.close(); } catch {}
+  return wavBlob;
+}
+
+// Garantiza WAV: si ya es WAV lo devuelve igual, si es webm/ogg lo convierte
+async function ensureWavBlob(inputBlob) {
+  const type = (inputBlob?.type || '').toLowerCase();
+  if (type.includes('wav')) return inputBlob;
+  if (type.includes('webm') || type.includes('ogg') || type.includes('opus')) {
+    return await webmOrOggToWav(inputBlob);
+  }
+  // último recurso: intenta decodificar y convertir
+  try { return await webmOrOggToWav(inputBlob); } catch { return inputBlob; }
+}
+
+
 export default function VoiceCommandPanel({ sessionId, onCommand }) {
   const navigate = useNavigate();
   const apiBase = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
@@ -20,8 +88,19 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
     useVoiceCommands({ sessionId });
 
   // Hook de mic level / VU meter
-  const { micStreamRef, level, db, startMeter, stopMeter, setLevel } = useMicLevel(); // ✅ viene del hook
-  const sttStopRef = useRef(null); // ✅ ref para parar el SDK
+  const micRef = useRef(null); // ← ref local, no dependas del hook
+  const {
+    level,
+    db,
+    // normaliza nombres del hook: si no existen, usa no-ops
+    startMeter: _startMeter,
+    stopMeter: _stopMeter,
+    setLevel: _setLevel,
+  } = useMicLevel() || {};
+    const startVU = typeof _startMeter === 'function' ? _startMeter : async () => {};
+    const stopVU  = typeof _stopMeter  === 'function' ? _stopMeter  : () => {};
+    const setVU   = typeof _setLevel   === 'function' ? _setLevel   : () => {};
+    const sttStopRef = useRef(null);
 
   // CONSENTIMIENTO
   const [showConsent, setShowConsent] = useState(() => {
@@ -40,7 +119,7 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
   
   const startSTT = async () => {
     if (listening) return;
-    setPartial(""); setFinalText(""); setLevel(0); setListening(true);
+    setPartial(""); setFinalText(""); setVU(0); setListening(true);
     try {
       const ctl = await startAzureSTT({
         apiBase,
@@ -51,16 +130,17 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
           // opcional: rutear intención aquí
           // intentRouter.parseIntent(text).then(res => { setTestResult(res); onCommand?.(res); });
         },
-        onLevel: setLevel,
+        onLevel: setVU,               // <-- aquí el fix
         onError: (e) => console.error("Azure STT error", e),
       });
       sttStopRef.current = ctl.stop;
     } catch (e) {
-      // Fallback a tu backend si el SDK falla
       console.warn("Falling back to server STT:", e.message);
       try {
         const { blob, fmt } = await recordAudioWithFallback(5);
-        const out = await transcribeBlob(blob, { language: "es-ES", fmt }); // <- tu hook existente
+        // 4) Convertir a WAV siempre y transcribir
+        const wav = await ensureWavBlob(blob);
+        const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
         setFinalText(out?.text || "");
       } catch (e2) {
         console.error("Fallback STT error:", e2);
@@ -112,6 +192,8 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
 
       try { await checkBackendHealth?.(); }
       catch (e) { console.error('Error checking backend health:', e); }
+      try { stopVU(); } catch {}
+      try { micRef.current?.getTracks().forEach(t => t.stop()); } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -125,61 +207,44 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
 
   // STT grabando 5s en OGG/Opus
   // STT con detección automática de formato + fallback a WAV
-const handleSTTRecord = async () => {
-  try {
-    // 1) Pide el stream una sola vez para alimentar medidor + grabación
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    micStreamRef.current = stream;
-    await startMeter(stream);
-    setListening(true);
 
-    // 2) Graba con fallback usando ese stream (5s)
-    const { blob, fmt } = await recordAudioWithFallback(5, { stream });
+  const handleSTTRecord = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micRef.current = stream;        // <-- usamos el ref local
+      await startVU(stream);          // <-- y el start seguro
+      setListening(true);
 
-    // 3) Parar medidor y stream ANTES de llamar al backend (UX)
-    setListening(false);
-    stopMeter();
-    try { stream.getTracks().forEach(t => t.stop()); } catch {}
+      const { blob, fmt } = await recordAudioWithFallback(5, { stream });
 
-    // 4) Transcribir
-    const out = await transcribeBlob(blob, { language: "es-ES", fmt });
-    const said = (out && (out.text || out.transcript || out.result?.text))?.trim() || "";
+      setListening(false);
+      try { stopVU(); } catch {}
+      try { stream.getTracks().forEach(t => t.stop()); } catch {}
 
-    if (!said) {
-      // Mostrar info útil si vuelve vacío
-      alert(`No se reconoció texto. Tamaño audio: ${blob.size} bytes · formato: ${fmt}`);
-      return;
+      const wav = await ensureWavBlob(blob);
+      const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
+      const said = (out && (out.text || out.transcript || out.result?.text))?.trim() || "";
+      if (!said) {
+        alert(`No se reconoció texto. Tamaño audio: ${blob.size} bytes · formato: ${fmt}`);
+        return;
+      }
+      console.log("STT out:", out);
+    } catch (e) {
+      console.error("STT error", e);
+      setListening(false);
+      try { stopVU(); } catch {}
+      try { micRef.current?.getTracks().forEach(t => t.stop()); } catch {}
+      logFallbackEvent("azure", "local", "stt_error", { where:"VoiceCommandPanel" }).catch(()=>{});
+
+      const msg = (e && e.message) || "";
+      const name = e && (e.name || "");
+      const isPerm = name === "NotAllowedError" || /permission/i.test(msg);
+      const isSupport = /MediaRecorder|getUserMedia|not supported/i.test(msg);
+      if (isPerm || isSupport) {
+        alert("No se pudo grabar audio en este navegador. Revisa permisos o prueba en Chrome/Edge.");
+      }
     }
-
-    // 👇 LOG diagnóstico visible en consola
-    console.log("STT out:", out);
-    console.log("STT raw.ingest:", out?.raw?.ingest, "warning:", out?.raw?.warning);
-    // Puedes mostrar un toast si viene vacío pero con duración muy baja:
-    const dur = out?.raw?.ingest?.duration_ms ?? 0;
-    if (!out?.text) {
-      console.warn(`Texto vacío. dur≈${dur}ms, fmt=${fmt}`);
-    }
-
-    // (Opcional) Enrutar intención:
-    // const result = await intentRouter.parseIntent(said);
-    // setTestResult(result); onCommand?.(result);
-  } catch (e) {
-    console.error("STT error", e);
-    setListening(false);
-    stopMeter();
-    try { micStreamRef.current?.getTracks().forEach(t => t.stop()); } catch {}
-    logFallbackEvent("azure", "local", "stt_error", { where:"VoiceCommandPanel" }).catch(()=>{});
-
-    const msg = (e && e.message) || "";
-    const name = e && (e.name || "");
-    const isPerm = name === "NotAllowedError" || /permission/i.test(msg);
-    const isSupport = /MediaRecorder|getUserMedia|not supported/i.test(msg);
-    if (isPerm || isSupport) {
-      alert("No se pudo grabar audio en este navegador. Revisa permisos o prueba en Chrome/Edge.");
-    }
-  }
-};
-
+  };
 
   // Probar texto -> intent
   const testCommand = async () => {
@@ -351,3 +416,5 @@ const handleSTTRecord = async () => {
     </>
   );
 }
+
+

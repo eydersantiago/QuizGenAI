@@ -337,6 +337,77 @@ function parseSpokenAnswer(text, question) {
   return { ok:true, value:text.trim() };
 }
 
+function LoadingScreen({ approx = 90 }) {
+  const [pct, setPct] = React.useState(0);
+
+  React.useEffect(() => {
+    let raf;
+    let last = performance.now();
+
+    const tick = (t) => {
+      const dt = t - last;
+      last = t;
+
+      // Incrementos suaves con pequeñas variaciones, se detiene en ~approx%
+      setPct((p) => {
+        if (p >= approx) return p;
+        const jitter = Math.random() * 1.1 + 0.6; // 0.6–1.7
+        const inc = (dt / 1000) * 12 * jitter;   // velocidad base
+        const next = Math.min(approx, p + inc);
+        return next;
+      });
+
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [approx]);
+
+  // Texto de estado dinámico
+  const status =
+    pct < 25 ? "Inicializando motor de preguntas…" :
+    pct < 50 ? "Consultando proveedor LLM y preparando sesión…" :
+    pct < 75 ? "Cocinando ítems y opciones con explicaciones…" :
+               "Puliendo formato y validaciones…";
+
+  return (
+    <main className="qp-loading-screen" role="alert" aria-busy="true" aria-live="polite">
+      <section className="qp-loading-card" aria-label="Cargando quiz">
+        <div className="qp-loading-head">
+          <div className="qp-loading-badge">Q</div>
+          <div className="qp-loading-title">Cargando tu quiz…</div>
+        </div>
+
+        <div className="qp-progress" aria-label="Progreso de carga">
+          <div
+            className="qp-progress__bar"
+            style={{ width: `${Math.floor(pct)}%` }}
+          />
+        </div>
+
+        <div className="qp-progress-row">
+          <div className="qp-progress-percent">{Math.floor(pct)}%</div>
+          <div className="qp-subtle">{status}</div>
+        </div>
+
+        <div className="qp-steps">
+          <div className="qp-step">⚡ <b>Rápido</b> — generado en segundos</div>
+          <div className="qp-step">🧠 <b>Inteligente</b> — con explicaciones</div>
+          <div className="qp-step">🎯 <b>Preciso</b> — tipos MCQ/VF/Corta</div>
+        </div>
+
+        <div className="qp-skeleton" aria-hidden="true">
+          <div className="qp-skel-line"></div>
+          <div className="qp-skel-line"></div>
+          <div className="qp-skel-line"></div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+
 
 export default function QuizPlay(props) {
   const { sessionId: routeSessionId } = useParams();
@@ -470,6 +541,16 @@ export default function QuizPlay(props) {
           body: JSON.stringify({ session_id: sessionId }),
         }, provider, headerName));
         const data = await resp.json();
+        // --- LOG de proveedor efectivo y fallback ---
+        const usedHeader = resp.headers.get("x-llm-effective-provider");
+        const fbHeader = resp.headers.get("x-llm-fallback");
+
+        const used = usedHeader || data.source || "(desconocido)";
+        const fallback = (fbHeader ?? (data.fallback_used ? "1" : "0")) === "1";
+
+        console.log("[LLM][QuizPlay] requested:", provider, "used:", used, "fallback:", fallback);
+        // --------------------------------------------
+
         if (!resp.ok)
           throw new Error(data?.error || "No se pudo cargar el quiz");
         if (!alive) return;
@@ -534,6 +615,12 @@ export default function QuizPlay(props) {
       }, provider, headerName));
 
       const data = await resp.json();
+      const usedHeader = resp.headers.get("x-llm-effective-provider");
+      const fbHeader = resp.headers.get("x-llm-fallback");
+      const used = usedHeader || data.source || "(desconocido)";
+      const fallback = (fbHeader ?? (data.fallback_used ? "1" : "0")) === "1";
+      console.log("[LLM][Regenerate] requested:", provider, "used:", used, "fallback:", fallback);
+
       if (!resp.ok) throw new Error(data?.error || "No se pudo regenerar");
 
       // El backend responde { question: {...}, source: "gemini|placeholder", debug? }
@@ -642,71 +729,32 @@ const readQuestion = async (idx) => {
 
 // Dentro de QuizPlay.jsx
 const dictateForQuestion = async (idx) => {
-
   try {
-    // 1) Graba con fallback (webm → ogg → wav) y valida tamaño
     console.log("[dictateForQuestion] START idx=", idx);
-    const { blob, fmt } = await recordAudioWithFallback(5); // 5s
-    console.log("[dictateForQuestion] blob=", blob?.type, blob?.size, "fmt=", fmt);
-    if (!blob || blob.size < 2048) { // <2KB suele ser silencio
+
+    // 1) Graba 5s (webm/opus, ogg, etc. según navegador)
+    const { blob } = await recordAudioWithFallback(5);
+    console.log("[dictateForQuestion] raw blob:", blob?.type, blob?.size);
+
+    if (!blob || blob.size < 2048) {
       console.warn("Audio vacío o muy pequeño", { size: blob?.size, type: blob?.type });
       Swal.fire("No se oyó nada", "Intenta hablar más cerca del micrófono.", "info");
       return;
     }
 
-    // 2) Transcribe y tolera formatos de respuesta
-    // const out = await transcribeBlob(blob, { language: "es-ES", fmt });
-    // console.debug("STT response:", out);
-    // 1) Primer intento: mandar tal cual
-    let out = await transcribeBlob(blob, { language: "es-ES", fmt });
+    // 2) Convierte SIEMPRE a WAV PCM16
+    const wav = await webmToWav(blob);
+    console.log("[dictateForQuestion] wav blob:", wav?.type, wav?.size);
+
+    // 3) Transcribe WAV
+    const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
     console.log("[dictateForQuestion] STT response:", out);
 
+    // 4) Extrae texto de posibles campos
+    const said =
+      (out && (out.text || out.transcript || out.result?.text || out.DisplayText || out.NBest?.[0]?.Lexical))?.trim() || "";
 
-    // 2) Extraer con todas las variantes de claves posibles (Azure/Whisper)
-    const extractSaid = (o) =>
-      (o &&
-        (
-          o.text ||
-          o.transcript ||
-          o.result?.text ||
-          o.DisplayText ||
-          o.displayText ||                       // por si viene en lower
-          o.NBest?.[0]?.Display ||
-          o.NBest?.[0]?.Lexical
-        )
-      ) ? String(
-          o.text ||
-          o.transcript ||
-          o.result?.text ||
-          o.DisplayText ||
-          o.displayText ||
-          o.NBest?.[0]?.Display ||
-          o.NBest?.[0]?.Lexical
-        ).trim() : "";
-
-    let said = extractSaid(out);
-
-
-
-
-
-
-      console.log("[dictateForQuestion] said:", JSON.stringify(said));
-
-      
-
-
-
-    // 3) Si vino vacío y el blob es webm/opus, convierte a WAV y reintenta
-    if (!said && /^audio\/webm/i.test(blob.type)) {
-      console.log("[dictateForQuestion] vacío con webm → convirtiendo a WAV y reintentando…");
-      const wav = await webmToWav(blob);
-      console.log("[dictateForQuestion] wav size=", wav.size);
-      out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
-      console.log("[dictateForQuestion] STT response (wav):", out);
-      said = extractSaid(out);
-      console.log("[dictateForQuestion] said (wav):", JSON.stringify(said));
-    }
+    console.log("[dictateForQuestion] said:", JSON.stringify(said));
 
     if (!said) {
       Swal.fire({
@@ -716,21 +764,18 @@ const dictateForQuestion = async (idx) => {
           <div style="text-align:left">
             • Verifica el volumen/micrófono.<br/>
             • Habla durante ~2–3 segundos.<br/>
-            • Prueba con palabras claras (p.ej. "respuesta A").<br/>
-            • Formato enviado: <code>${fmt}</code> (size: ${blob.size} bytes) — reintento WAV si vacío
+            • Ejemplos: "respuesta A", "verdadero", "la tercera".<br/>
+            • Enviado: WAV (${wav.size} bytes)
           </div>
         `,
       });
       return;
     }
 
-    // 3) Parsear y marcar
+    // 5) Parsear y marcar
     const q = questions[idx];
     const parsed = parseSpokenAnswer(said, q);
-
-    console.debug("[dictateForQuestion] said:", said);
-
-    console.debug("[dictateForQuestion] parsed:", parsed, "type=", q.type);
+    console.debug("[dictateForQuestion] parsed:", parsed, "type=", q?.type);
 
     if (!parsed.ok) {
       Swal.fire("No entendido", `No pude interpretar: "${said}"`, "info");
@@ -763,6 +808,11 @@ const dictateForQuestion = async (idx) => {
     );
   }
 };
+
+
+
+
+
 
 // DEBUG: probar desde consola: window.dictateForQuestion(0)
  useEffect(() => {
@@ -1238,12 +1288,9 @@ const dictateForQuestion = async (idx) => {
   }, [questions, answers]);
 
   if (loading) {
-    return (
-      <main className="shell qp-root">
-        <section className="card qp-loading">Cargando quiz...</section>
-      </main>
-    );
+    return <LoadingScreen approx={92} />;
   }
+
   if (error) {
     return (
       <main className="shell qp-root">

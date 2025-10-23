@@ -295,6 +295,14 @@ export default function QuizForm(props) {
       )
     );
     const json = await res.json();
+
+    const usedHeader = res.headers.get("x-llm-effective-provider");
+    const fbHeader = res.headers.get("x-llm-fallback");
+
+    const used = usedHeader || json.source;           // respaldo al body
+    const fallback = (fbHeader ?? (json.fallback_used ? "1" : "0")) === "1";
+
+    console.log("[LLM] requested:", provider, "used:", used, "fallback:", fallback);
     if (res.ok) setPreview(json.preview);
     else Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
   }

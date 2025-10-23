@@ -760,6 +760,189 @@
   z-index: 10;
 }
 
+/* =========================
+   LOADER CON PROGRESO (QP)
+   ========================= */
+
+:root {
+  --qp-bg-1: #0f1020;
+  --qp-bg-2: #151638;
+  --qp-fg: #e8e9ff;
+  --qp-muted: #a7a9cc;
+  --qp-accent-1: #8b5cf6;   /* morado */
+  --qp-accent-2: #22d3ee;   /* cian */
+  --qp-accent-3: #f59e0b;   /* ámbar */
+  --qp-card: #1b1e3a;
+  --qp-shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+
+/* Fondo a toda pantalla con gradiente animado */
+.qp-loading-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(1200px 800px at 10% -10%, #292a57 0%, rgba(20,22,47,0) 70%),
+              radial-gradient(1000px 900px at 110% 120%, #0a3b4a 0%, rgba(20,22,47,0) 75%),
+              linear-gradient(130deg, var(--qp-bg-1), var(--qp-bg-2));
+  color: var(--qp-fg);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Partículas sutiles */
+.qp-loading-screen::before,
+.qp-loading-screen::after {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  background:
+    radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,.12) 50%, transparent 51%) repeat,
+    radial-gradient(2px 2px at 70% 60%, rgba(255,255,255,.08) 50%, transparent 51%) repeat;
+  background-size: 180px 180px, 220px 220px;
+  animation: qp-float-particles 14s linear infinite;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: .22;
+}
+.qp-loading-screen::after {
+  animation-duration: 22s;
+  opacity: .16;
+}
+
+@keyframes qp-float-particles {
+  0% { transform: translate3d(0,0,0) rotate(0deg); }
+  100% { transform: translate3d(2%, -3%, 0) rotate(1turn); }
+}
+
+/* Tarjeta central */
+.qp-loading-card {
+  width: min(880px, 92vw);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 20px;
+  box-shadow: var(--qp-shadow);
+  padding: 28px;
+  backdrop-filter: blur(8px);
+}
+
+/* Cabecera */
+.qp-loading-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.qp-loading-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--qp-accent-1), var(--qp-accent-2));
+  color: #0b0b12;
+  font-weight: 800;
+  box-shadow: 0 8px 24px rgba(139,92,246,.35);
+}
+.qp-loading-title {
+  font-size: clamp(18px, 2.6vw, 24px);
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+
+/* Barra de progreso */
+.qp-progress {
+  margin-top: 8px;
+  background: rgba(255,255,255,.09);
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  height: 14px;
+  position: relative;
+  overflow: hidden;
+}
+
+.qp-progress__bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--qp-accent-2), var(--qp-accent-1), var(--qp-accent-3));
+  background-size: 200% 100%;
+  animation: qp-sheen 1.4s linear infinite;
+  box-shadow: 0 10px 24px rgba(34,211,238,.25);
+  transition: width .25s ease;
+}
+
+@keyframes qp-sheen {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* Porcentaje y subtítulo */
+.qp-progress-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 10px;
+}
+.qp-progress-percent {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: .95;
+}
+.qp-subtle {
+  color: var(--qp-muted);
+  font-size: .95rem;
+}
+
+/* Tips o estados */
+.qp-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 18px;
+}
+.qp-step {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  padding: 12px;
+  font-size: .95rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.qp-step b { color: #fff; }
+
+/* Skeleton mini-lista (opcional, pura estética) */
+.qp-skeleton {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+.qp-skel-line {
+  height: 12px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(255,255,255,.08) 25%, rgba(255,255,255,.16) 50%, rgba(255,255,255,.08) 75%);
+  background-size: 320% 100%;
+  animation: qp-skel 1.2s ease-in-out infinite;
+}
+.qp-skel-line:nth-child(2) { width: 78%; }
+.qp-skel-line:nth-child(3) { width: 55%; }
+
+@keyframes qp-skel {
+  0% { background-position: 200% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Accesibilidad: reduce animación si el usuario lo prefiere */
+@media (prefers-reduced-motion: reduce) {
+  .qp-loading-screen::before,
+  .qp-loading-screen::after,
+  .qp-progress__bar,
+  .qp-skel-line {
+    animation: none !important;
+  }
+}
 
 
 
