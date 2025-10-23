@@ -5,6 +5,7 @@ from .views_metrics import metrics_summary, metrics_export
 from .voice_metrics_views import log_voice_event, voice_metrics_summary, voice_metrics_export, voice_metrics_events
 from .views_tts import voice_token, tts_synthesize
 from .views_stt import stt_recognize
+from .views_speech import speech_token
 from .views_saved_quizzes import (
     saved_quizzes, saved_quiz_detail, load_saved_quiz, quiz_statistics
 )
@@ -14,6 +15,8 @@ from .views_intent_router import (
     parse_intent,
     batch_parse_intents,
 )
+from .views_ffmpeg_debug import ffmpeg_debug
+path("ffmpeg-debug/", ffmpeg_debug),
 
 router = DefaultRouter()
 
@@ -44,6 +47,7 @@ urlpatterns = [
     path("voice/token/", voice_token, name="voice_token"),
     path("voice/tts/", tts_synthesize, name="tts_synthesize"),
     path("voice/stt/", stt_recognize, name="stt_recognize"),
+    path("speech/token/", speech_token, name="speech_token"),
 
     path("intent-router/health/", intent_health, name="intent_health"),
     path("intent-router/supported_intents/", supported_intents, name="supported_intents"),

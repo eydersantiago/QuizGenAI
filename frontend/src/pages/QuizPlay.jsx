@@ -9,6 +9,70 @@ import "../estilos/QuizPlay.css";
 import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
 import { useVoiceCommands } from "../hooks/useVoiceCommands";
 import { recordAudioWithFallback } from "../utils/audioRecorder";
+// import { startAzureSTT } from "../voice/azureClientSST";
+// import { parseAnswerCommand } from "../utils/voiceParsing";
+
+
+
+
+// Convierte un AudioBuffer a WAV PCM16
+function audioBufferToWavPcm16(buffer, opt = {}) {
+  const numOfChan = buffer.numberOfChannels;
+  const length = buffer.length * numOfChan * 2 + 44;
+  const sampleRate = buffer.sampleRate;
+  const out = new ArrayBuffer(length);
+  const view = new DataView(out);
+
+  let offset = 0;
+  const writeString = (s) => { for (let i = 0; i < s.length; i++) view.setUint8(offset++, s.charCodeAt(i)); };
+  const write16 = (d) => { view.setUint16(offset, d, true); offset += 2; };
+  const write32 = (d) => { view.setUint32(offset, d, true); offset += 4; };
+
+  // WAV header
+  writeString('RIFF');               // RIFF identifier
+  write32(length - 8);               // file length minus RIFF and size
+  writeString('WAVE');               // RIFF type
+  writeString('fmt ');               // format chunk identifier
+  write32(16);                       // format chunk length
+  write16(1);                        // audio format (1 = PCM)
+  write16(numOfChan);                // number of channels
+  write32(sampleRate);               // sample rate
+  write32(sampleRate * numOfChan * 2); // byte rate
+  write16(numOfChan * 2);            // block align
+  write16(16);                       // bits per sample
+  writeString('data');               // data chunk identifier
+  write32(length - offset - 4);      // data chunk length
+
+  // Interleave + write samples as PCM16
+  const channels = [];
+  for (let i = 0; i < numOfChan; i++) channels.push(buffer.getChannelData(i));
+
+  const interleaved = new Float32Array(buffer.length * numOfChan);
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numOfChan; ch++) {
+      interleaved[i * numOfChan + ch] = channels[ch][i];
+    }
+  }
+
+  for (let i = 0; i < interleaved.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, interleaved[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+// Convierte un Blob WebM/Opus a WAV usando WebAudio
+async function webmToWav(blob) {
+  const arrayBuf = await blob.arrayBuffer();
+  const audioCtx = new (window.OfflineAudioContext || window.AudioContext)({ sampleRate: 48000, numberOfChannels: 2, length: 48000 }); // fallback params (no se usan si es AudioContext normal)
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await ctx.decodeAudioData(arrayBuf.slice(0)); // decode
+  const wavBlob = audioBufferToWavPcm16(decoded);
+  try { ctx.close(); } catch {}
+  return wavBlob;
+}
+
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
 
@@ -189,6 +253,91 @@ const exportToTXT = (questions, answers, submitted) => {
   document.body.removeChild(element);
 };
 
+// Normaliza: minúsculas + sin tildes
+const norm = (s="") =>
+  s.toLowerCase()
+   .normalize("NFD")
+   .replace(/\p{Diacritic}/gu, "")
+   .trim();
+
+// Mapea palabras/numero -> letra
+const numToLetter = (w) => {
+  const m = {
+    "1":"A","uno":"A","primera":"A","la a":"A","a":"A",
+    "2":"B","dos":"B","segunda":"B","la b":"B","b":"B",
+    "3":"C","tres":"C","tercera":"C","la c":"C","c":"C",
+    "4":"D","cuatro":"D","cuarta":"D","la d":"D","d":"D",
+  };
+  return m[w] || null;
+};
+
+// Intenta extraer una letra A-D de frases comunes en español
+function extractLetter(text) {
+  const t = norm(text);
+
+  // Patrones típicos
+  const patterns = [
+    /respuesta\s*([abcd])/i,
+    /op(c|s)ion\s*([abcd])/i,
+    /alternativa\s*([abcd])/i,
+    /\b(letra|la)\s*([abcd])\b/i,
+    /respuesta\s*(numero|nro|#)?\s*(\d+)/i,
+    /op(c|s)ion\s*(\d+)/i,
+    /\b(\d+|uno|dos|tres|cuatro)\b/i,
+    /\b([abcd])\b/i
+  ];
+
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (!m) continue;
+
+    // Captura puede estar en el 1 o 2 según el patrón
+    const g = (m[2] || m[1] || "").toString();
+    // ¿número/palabra o letra?
+    const n = g.match(/^\d+$/) ? g : g;
+    const maybe = numToLetter(n);
+    if (maybe) return maybe;
+
+    // Si ya es letra a-d
+    if (/[abcd]/.test(g)) return g.toUpperCase();
+  }
+  return null;
+}
+
+// Verdadero/Falso
+function extractVF(text) {
+  const t = norm(text);
+  if (/\b(verdadero|cierto|true|correcto|si|afirmativo)\b/.test(t)) return true;
+  if (/\b(falso|false|incorrecto|no|negativo)\b/.test(t)) return false;
+  return null;
+}
+
+/**
+ * Dada la transcripción y la pregunta, devuelve {ok, value} para marcar.
+ * - MCQ -> value = "A" | "B" | "C" | "D"
+ * - VF  -> value = true | false
+ * - short -> value = string transcrito
+ */
+function parseSpokenAnswer(text, question) {
+  if (!text || !question) return { ok:false };
+
+  if (question.type === "mcq") {
+    const letter = extractLetter(text);
+    if (letter) return { ok:true, value:letter };
+    // fallback: si dijo "opcion primera/segunda", etc. ya lo cubre extractLetter
+    return { ok:false };
+  }
+
+  if (question.type === "vf") {
+    const v = extractVF(text);
+    return v === null ? { ok:false } : { ok:true, value:v };
+  }
+
+  // short answer: usamos el texto completo
+  return { ok:true, value:text.trim() };
+}
+
+
 export default function QuizPlay(props) {
   const { sessionId: routeSessionId } = useParams();
   const sessionId = props?.sessionId ?? routeSessionId;
@@ -258,28 +407,30 @@ export default function QuizPlay(props) {
     return null;
   };
 
-  const dictarRespuesta = async () => {
-    try {
-      const { blob, fmt } = await recordAudioWithFallback(4);
-      const out = await transcribeBlob(blob, { language: "es-ES", fmt });
-      const heard = out?.text || "";
-      const q = questions[currentQuestionIndex];
-      if (!q) return;
+  // const dictarRespuesta = async () => {
+  //   try {
+  //     const { blob, fmt } = await recordAudioWithFallback(4);
+  //     const out = await transcribeBlob(blob, { language: "es-ES", fmt });
+  //     const heard = out?.text || "";
+  //     const q = questions[currentQuestionIndex];
+  //     if (!q) return;
 
-      if (q.type === "mcq") {
-        const choice = _mapChoiceFromText(heard);
-        setAnswers(prev => ({ ...prev, [currentQuestionIndex]: choice || heard }));
-      } else if (q.type === "vf") {
-        const bool = _mapVF(heard);
-        if (bool !== null) setAnswers(prev => ({ ...prev, [currentQuestionIndex]: bool }));
-      } else {
-        setAnswers(prev => ({ ...prev, [currentQuestionIndex]: heard }));
-      }
-    } catch (e) {
-      console.error("STT error", e);
-      alert("No se pudo grabar audio en este navegador. Revisa permisos o prueba en Chrome/Edge.");
-    }
-  };
+  //     if (q.type === "mcq") {
+  //       const choice = _mapChoiceFromText(heard);
+  //       setAnswers(prev => ({ ...prev, [currentQuestionIndex]: choice || heard }));
+  //     } else if (q.type === "vf") {
+  //       const bool = _mapVF(heard);
+  //       if (bool !== null) setAnswers(prev => ({ ...prev, [currentQuestionIndex]: bool }));
+  //     } else {
+  //       setAnswers(prev => ({ ...prev, [currentQuestionIndex]: heard }));
+  //     }
+  //   } catch (e) {
+  //     console.error("STT error", e);
+  //     alert("No se pudo grabar audio en este navegador. Revisa permisos o prueba en Chrome/Edge.");
+  //   }
+  // };
+
+  
 
 
 
@@ -489,59 +640,137 @@ const readQuestion = async (idx) => {
   try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
 };
 
-// Dictar respuesta para una pregunta específica
+// Dentro de QuizPlay.jsx
 const dictateForQuestion = async (idx) => {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    alert("Micrófono no soportado");
-    return;
-  }
+
   try {
-    const { blob, fmt } = await recordAudioWithFallback(5);
-    const out = await transcribeBlob(blob, { language: "es-ES", fmt });
+    // 1) Graba con fallback (webm → ogg → wav) y valida tamaño
+    console.log("[dictateForQuestion] START idx=", idx);
+    const { blob, fmt } = await recordAudioWithFallback(5); // 5s
+    console.log("[dictateForQuestion] blob=", blob?.type, blob?.size, "fmt=", fmt);
+    if (!blob || blob.size < 2048) { // <2KB suele ser silencio
+      console.warn("Audio vacío o muy pequeño", { size: blob?.size, type: blob?.type });
+      Swal.fire("No se oyó nada", "Intenta hablar más cerca del micrófono.", "info");
+      return;
+    }
 
-    const spoken = (out?.text || "").trim();
-    if (!spoken) return;
+    // 2) Transcribe y tolera formatos de respuesta
+    // const out = await transcribeBlob(blob, { language: "es-ES", fmt });
+    // console.debug("STT response:", out);
+    // 1) Primer intento: mandar tal cual
+    let out = await transcribeBlob(blob, { language: "es-ES", fmt });
+    console.log("[dictateForQuestion] STT response:", out);
 
+
+    // 2) Extraer con todas las variantes de claves posibles (Azure/Whisper)
+    const extractSaid = (o) =>
+      (o &&
+        (
+          o.text ||
+          o.transcript ||
+          o.result?.text ||
+          o.DisplayText ||
+          o.displayText ||                       // por si viene en lower
+          o.NBest?.[0]?.Display ||
+          o.NBest?.[0]?.Lexical
+        )
+      ) ? String(
+          o.text ||
+          o.transcript ||
+          o.result?.text ||
+          o.DisplayText ||
+          o.displayText ||
+          o.NBest?.[0]?.Display ||
+          o.NBest?.[0]?.Lexical
+        ).trim() : "";
+
+    let said = extractSaid(out);
+
+
+
+
+
+
+      console.log("[dictateForQuestion] said:", JSON.stringify(said));
+
+      
+
+
+
+    // 3) Si vino vacío y el blob es webm/opus, convierte a WAV y reintenta
+    if (!said && /^audio\/webm/i.test(blob.type)) {
+      console.log("[dictateForQuestion] vacío con webm → convirtiendo a WAV y reintentando…");
+      const wav = await webmToWav(blob);
+      console.log("[dictateForQuestion] wav size=", wav.size);
+      out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
+      console.log("[dictateForQuestion] STT response (wav):", out);
+      said = extractSaid(out);
+      console.log("[dictateForQuestion] said (wav):", JSON.stringify(said));
+    }
+
+    if (!said) {
+      Swal.fire({
+        icon: "info",
+        title: "Sin texto reconocido",
+        html: `
+          <div style="text-align:left">
+            • Verifica el volumen/micrófono.<br/>
+            • Habla durante ~2–3 segundos.<br/>
+            • Prueba con palabras claras (p.ej. "respuesta A").<br/>
+            • Formato enviado: <code>${fmt}</code> (size: ${blob.size} bytes) — reintento WAV si vacío
+          </div>
+        `,
+      });
+      return;
+    }
+
+    // 3) Parsear y marcar
     const q = questions[idx];
-    if (!q) return;
+    const parsed = parseSpokenAnswer(said, q);
 
-    // Heurística rápida según tipo
-    if (q.type === "short") {
-      setAnswers((p) => ({ ...p, [idx]: spoken }));
+    console.debug("[dictateForQuestion] said:", said);
+
+    console.debug("[dictateForQuestion] parsed:", parsed, "type=", q.type);
+
+    if (!parsed.ok) {
+      Swal.fire("No entendido", `No pude interpretar: "${said}"`, "info");
       return;
     }
-    if (q.type === "vf") {
-      const s = spoken.toLowerCase();
-      if (/^v(er)?d(er)?adero|^true/.test(s)) setAnswers((p) => ({ ...p, [idx]: true }));
-      else if (/^f(al)?so|^false/.test(s)) setAnswers((p) => ({ ...p, [idx]: false }));
-      else alert(`No entendí V/F: "${spoken}"`);
-      return;
-    }
+
     if (q.type === "mcq") {
-      // Intentar mapear a A/B/C/D
-      const s = spoken.toLowerCase();
-      const map = { a: "A", b: "B", c: "C", d: "D" };
-      const matchLetter = s.match(/\b([a-d])\b/i);
-      if (matchLetter) {
-        setAnswers((p) => ({ ...p, [idx]: map[matchLetter[1].toLowerCase()] }));
-        return;
-      }
-      // alternativa: "opción 1/2/3/4"
-      const matchNum = s.match(/\b(opcion|opción)?\s*(\d)\b/i);
-      if (matchNum) {
-        const n = parseInt(matchNum[2], 10);
-        if (n >= 1 && n <= 4) {
-          setAnswers((p) => ({ ...p, [idx]: String.fromCharCode(64 + n) })); // 1->A
-          return;
-        }
-      }
-      alert(`No entendí la opción (A/B/C/D) en: "${spoken}"`);
+      const letter = parsed.value; // "A"..."D"
+      const optIdx = letter.charCodeAt(0) - "A".charCodeAt(0);
+      handleSelectMCQ(idx, optIdx);
+    } else if (q.type === "vf") {
+      handleToggleVF(idx, parsed.value); // true/false
+    } else {
+      handleShortChange(idx, parsed.value); // string
     }
   } catch (e) {
-    console.error("STT error", e);
-    alert("No se pudo transcribir. Revisa permisos de micrófono.");
+    console.error("Dictado/STT error", e);
+    const msg = (e && e.message) || "";
+    const name = e && (e.name || "");
+    const perm = name === "NotAllowedError" || /permission/i.test(msg);
+    const support = /MediaRecorder|getUserMedia|not supported/i.test(msg);
+    Swal.fire(
+      "No se pudo grabar",
+      perm
+        ? "Permite el uso del micrófono en tu navegador."
+        : support
+        ? "Prueba en Chrome/Edge, o actualiza tu navegador."
+        : "Ocurrió un error al transcribir.",
+      "warning"
+    );
   }
 };
+
+// DEBUG: probar desde consola: window.dictateForQuestion(0)
+ useEffect(() => {
+   window.dictateForQuestion = dictateForQuestion;
+ }, []);
+
+
+
 
   const handleToggleVF = (idx, val) => {
     setAnswers((p) => ({ ...p, [idx]: val }));
@@ -1134,8 +1363,15 @@ return (
                       <button className="btn btn-indigo" onClick={() => readQuestion(idx)}>
                         🔊 Leer
                       </button>
-                      <button className="btn btn-green-outline" onClick={() => dictateForQuestion(idx)}>
-                        🎙️ Dictar
+                      <button
+                        className="btn btn-green-outline"
+                        type="button"
+                        onClick={() => {
+                          console.log("[QuizPlay] click en Dictar idx=", idx);
+                          dictateForQuestion(idx);
+                        }}
+                      >
+                        🎙️ Dictar esta
                       </button>
                     </div>
                   )}

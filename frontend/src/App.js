@@ -5,6 +5,7 @@ import QuizForm from "./components/QuizForm";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
 import SavedQuizzes from "./components/SavedQuizzes";
+import MicTest from "./pages/MicTest";
 import { v4 as uuidv4 } from "uuid";
 import { setVoiceMetricsSession } from "./services/voiceMetricsService";
 
@@ -60,7 +61,9 @@ function App() {
               </Link>
               <ModelProviderSelect compact />
             </div>
-          )}
+          )}0
+
+          
 
           {/* Contenido */}
           {!hideHomeChrome ? (
@@ -82,6 +85,7 @@ function App() {
 
               <Routes>
                 <Route path="/" element={<QuizForm />} />
+                <Route path="/mic-test" element={<MicTest />} />
                 <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
                 <Route
                   path="/voice"
@@ -99,6 +103,7 @@ function App() {
               <Route path="/quiz/:sessionId" element={<QuizPlay />} />
               <Route path="/saved-quizzes" element={<SavedQuizzes />} />
               <Route path="/admin/metrics" element={<AdminMetrics />} />
+              <Route path="/mic-test" element={<MicTest />} />
               <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
               <Route
                 path="/voice"

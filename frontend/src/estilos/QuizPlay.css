@@ -750,6 +750,17 @@
     border-radius: 8px;
     padding: 6px 10px; }
 
+    /* QuizPlay.css (temporal para descartar overlays) */
+.qp-voice-panel {
+  position: relative;
+  z-index: 5;
+}
+.qp-voice-panel .btn {
+  position: relative;
+  z-index: 10;
+}
+
+
 
 
 

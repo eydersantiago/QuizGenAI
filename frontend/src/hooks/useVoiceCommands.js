@@ -40,10 +40,11 @@ export function useVoiceCommands({ sessionId } = {}) {
     const t0 = performance.now();
     try {
       logSTTEvent("start", null, null, null, { language, fmt }).catch(()=>{});
-      const out = await sttRecognizeBlob({ blob, language, fmt, sessionId });
+      const out = await sttRecognizeBlob({ blob, language, fmt, sessionId }); // <-- usa voiceApi
       const latency = Math.round(performance.now() - t0);
-      logSTTEvent("final", latency, (out?.text || "").length, out?.confidence ?? null, { language, fmt }).catch(()=>{});
-      return out; // { text, confidence, latency_ms, raw }
+      const text = (out && (out.text || out.transcript || out.result?.text)) || ""; // tolerante
+      logSTTEvent("final", latency, text.length, out?.confidence ?? null, { language, fmt }).catch(()=>{});
+      return { ...out, text }; // garantiza 'text'
     } catch (e) {
       const latency = Math.round(performance.now() - t0);
       logSTTEvent("error", latency, null, null, { language, fmt, error: String(e) }).catch(()=>{});

@@ -31,3 +31,9 @@ urllib3==2.5.0
 colorama==0.4.6
 uvicorn[standard]==0.30.6
 typing_extensions==4.15.0
+
+
+#azure speech sdk
+pydub==0.25.1
+soundfile==0.12.1
+azure-cognitiveservices-speech==1.46.0
