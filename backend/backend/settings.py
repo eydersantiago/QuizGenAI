@@ -5,7 +5,7 @@ import sys
 from dotenv import load_dotenv
 import dj_database_url
 
-# --- Mitigar conflicto de paquetes inyectados por Azure (OpenTelemetry/agents) ---
+# --- Mitigar conflictos por agentes de Azure (OpenTelemetry) ---
 # Evita que /agents/python/typing_extensions.py sombree el del venv
 sys.path = [p for p in sys.path if "/agents/python" not in p]
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
@@ -13,28 +13,37 @@ os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")  # opcional en local
 
+# Helper para leer listas desde variables de entorno (coma-separadas)
 def csv_env(name, default=""):
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
 
+# --- Core ---
 SECRET_KEY = os.getenv("SECRET_KEY", "!!!_dev_only_change_me_!!!")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 ALLOWED_HOSTS = csv_env(
     "ALLOWED_HOSTS",
-    ".azurewebsites.net,.scm.azurewebsites.net,localhost,127.0.0.1,169.254.129.4"
+    # Azure + dev por defecto
+    ".azurewebsites.net,.scm.azurewebsites.net,localhost,127.0.0.1"
 )
 
-# CORS / CSRF
+# --- CORS / CSRF ---
+# Autoriza tu frontend en Vercel (dominio fijo) + dev
 CORS_ALLOWED_ORIGINS = csv_env(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,https://quiz-gen-ai-three.vercel.app"
+    "https://quiz-gen-ai-three.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
 )
-CORS_ALLOWED_ORIGIN_REGEXES = [r"^https://.*\.vercel\.app$"]
+# Acepta cualquier subdominio *.vercel.app adicional si lo necesitas
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$"
+]
+
 CSRF_TRUSTED_ORIGINS = csv_env(
     "CSRF_TRUSTED_ORIGINS",
     "https://*.azurewebsites.net,https://*.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
 )
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = ["*"]
@@ -52,6 +61,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # CORS debe ir muy arriba
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -83,6 +93,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 ASGI_APPLICATION = "backend.asgi.application"
 
+# --- Base de datos ---
 DATABASES = {
     "default": dj_database_url.parse(
         os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
@@ -91,6 +102,7 @@ DATABASES = {
     )
 }
 
+# --- Password validators ---
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -98,47 +110,31 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# --- i18n / zona horaria ---
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
+# --- Archivos estáticos (Whitenoise) ---
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"}
 }
 
-# DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# --- Seguridad detrás de proxy de Azure ---
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# if not DEBUG:
-#     SECURE_SSL_REDIRECT = True
-#     CSRF_COOKIE_SECURE = True
-#     SESSION_COOKIE_SECURE = True
-#     USE_X_FORWARDED_HOST = True
-
-
-# === Solo para DESARROLLO ===
-DEBUG = True
-SECURE_SSL_REDIRECT = False
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
-SECURE_HSTS_SECONDS = 0
-SECURE_PROXY_SSL_HEADER = None  # si lo tenías para Azure tras Nginx/FrontDoor
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
-
-
-
-
-
-
-
-
-
-
-    # HSTS opcional en prod
+if not DEBUG:
+    # Endurecer en producción
+    SECURE_SSL_REDIRECT = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+    USE_X_FORWARDED_HOST = True
+    # HSTS (opcional, actívalo cuando todo sirva por HTTPS estable)
     # SECURE_HSTS_SECONDS = 31536000
     # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     # SECURE_HSTS_PRELOAD = True
