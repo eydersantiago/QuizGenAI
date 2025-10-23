@@ -159,6 +159,8 @@
   transform: translateY(0);
 }
 
+.btn-test { padding: .5rem .75rem; border-radius: .5rem; cursor: pointer; margin-left: .5rem; }
+
 /* Skeletons */
 .am-skeleton {
   display: grid;

@@ -29,6 +29,6 @@ export function withProviderHeaders(init = {}, provider, headerName = "X-LLM-Pro
 }
 
 export const PROVIDER_LABELS = {
-  perplexity: "Perplexity (prod)",
-  gemini_flash_2_5_demo: "Gemini Flash 2.5 (demo)",
+  perplexity: "Perplexity [usar en producción]",
+  gemini_flash_2_5_demo: "Gemini Flash 2.5 [usar en pruebas]",
 };

@@ -64,33 +64,12 @@ def _calculate_percentile(values_list: List[float], percentile: int) -> float:
 
     return float(lower_value + (upper_value - lower_value) * fraction)
 
-
+# api/services/voice_metrics.py (sólo la función compute_voice_metrics)
 def compute_voice_metrics(start: Optional[str] = None, end: Optional[str] = None) -> Dict[str, Any]:
     """
     Calcula métricas agregadas de eventos de voz (STT/TTS).
-
-    Args:
-        start: Fecha de inicio en formato 'YYYY-MM-DD' (opcional)
-        end: Fecha de fin en formato 'YYYY-MM-DD' (opcional)
-
-    Returns:
-        Diccionario con todas las métricas calculadas:
-        - stt_latency_p50_ms: Percentil 50 de latencias STT
-        - stt_latency_p95_ms: Percentil 95 de latencias STT
-        - tts_latency_p50_ms: Percentil 50 de latencias TTS
-        - tts_latency_p95_ms: Percentil 95 de latencias TTS
-        - total_intents: Cantidad de intenciones reconocidas
-        - intent_avg_confidence: Promedio de confianza en intenciones
-        - intent_accuracy_rate: % de intenciones con confidence >= 0.8
-        - fallback_count: Cantidad de fallbacks activados
-        - fallback_rate: Ratio de fallback respecto a intenciones
-        - barge_in_count: Cantidad de interrupciones
-        - suggestions_shown: Cantidad de sugerencias mostradas
-        - suggestions_accepted: Cantidad de sugerencias aceptadas
-        - suggestion_accept_rate: Ratio de aceptación de sugerencias
-        - backend_distribution: Distribución por backend utilizado
+    Acepta 'stt_final' y 'stt_complete' para latencias STT.
     """
-    # Aplicar filtros de fecha
     qs = VoiceMetricEvent.objects.all()
 
     start_dt = _parse_date(start)
@@ -99,20 +78,21 @@ def compute_voice_metrics(start: Optional[str] = None, end: Optional[str] = None
     if start_dt:
         qs = qs.filter(timestamp__gte=start_dt)
     if end_dt:
-        # Incluir todo el día fin
         qs = qs.filter(timestamp__lt=(end_dt + timedelta(days=1)))
 
     # --- STT Latencies ---
-    stt_events = qs.filter(event_type='stt_final', latency_ms__isnull=False)
+    # Alinea con las vistas nuevas que registran 'stt_complete'
+    stt_events = qs.filter(
+        event_type__in=['stt_final', 'stt_complete'],
+        latency_ms__isnull=False
+    )
     stt_latencies = list(stt_events.values_list('latency_ms', flat=True))
-
     stt_latency_p50_ms = _calculate_percentile(stt_latencies, 50)
     stt_latency_p95_ms = _calculate_percentile(stt_latencies, 95)
 
     # --- TTS Latencies ---
     tts_events = qs.filter(event_type='tts_complete', latency_ms__isnull=False)
     tts_latencies = list(tts_events.values_list('latency_ms', flat=True))
-
     tts_latency_p50_ms = _calculate_percentile(tts_latencies, 50)
     tts_latency_p95_ms = _calculate_percentile(tts_latencies, 95)
 
@@ -120,23 +100,17 @@ def compute_voice_metrics(start: Optional[str] = None, end: Optional[str] = None
     intent_events = qs.filter(event_type='intent_recognized')
     total_intents = intent_events.count()
 
-    # Promedio de confianza en intenciones
     intent_stats = intent_events.filter(confidence__isnull=False).aggregate(
         avg_confidence=Avg('confidence')
     )
     intent_avg_confidence = round(intent_stats['avg_confidence'] or 0.0, 4)
 
-    # Accuracy rate (confidence >= 0.8)
     high_confidence_count = intent_events.filter(confidence__gte=0.8).count()
-    intent_accuracy_rate = 0.0
-    if total_intents > 0:
-        intent_accuracy_rate = round(high_confidence_count / total_intents, 4)
+    intent_accuracy_rate = round(high_confidence_count / total_intents, 4) if total_intents > 0 else 0.0
 
     # --- Fallback Metrics ---
     fallback_count = qs.filter(event_type='fallback_triggered').count()
-    fallback_rate = 0.0
-    if total_intents > 0:
-        fallback_rate = round(fallback_count / total_intents, 4)
+    fallback_rate = round(fallback_count / total_intents, 4) if total_intents > 0 else 0.0
 
     # --- Barge-in ---
     barge_in_count = qs.filter(event_type='barge_in').count()
@@ -144,20 +118,15 @@ def compute_voice_metrics(start: Optional[str] = None, end: Optional[str] = None
     # --- Suggestion Metrics ---
     suggestions_shown = qs.filter(event_type='suggestion_shown').count()
     suggestions_accepted = qs.filter(event_type='suggestion_accepted').count()
-
-    suggestion_accept_rate = 0.0
-    if suggestions_shown > 0:
-        suggestion_accept_rate = round(suggestions_accepted / suggestions_shown, 4)
+    suggestion_accept_rate = round(suggestions_accepted / suggestions_shown, 4) if suggestions_shown > 0 else 0.0
 
     # --- Backend Distribution ---
     backend_events = qs.filter(backend_used__isnull=False)
     backend_distribution = {}
-
     for backend_name in backend_events.values_list('backend_used', flat=True).distinct():
         count = backend_events.filter(backend_used=backend_name).count()
         backend_distribution[backend_name] = count
 
-    # Construir diccionario de métricas
     metrics = {
         "stt_latency_p50_ms": round(stt_latency_p50_ms, 2),
         "stt_latency_p95_ms": round(stt_latency_p95_ms, 2),
@@ -179,8 +148,8 @@ def compute_voice_metrics(start: Optional[str] = None, end: Optional[str] = None
             "date_filter_applied": start_dt is not None or end_dt is not None,
         }
     }
-
     return metrics
+
 
 
 def build_voice_metrics_csv(metrics: Dict[str, Any]) -> str:

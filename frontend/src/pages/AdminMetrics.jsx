@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import "../estilos/AdminMetrics.css";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
@@ -129,6 +130,7 @@ export default function AdminMetrics() {
           </div>
         </div>
       </section>
+
 
       {loading && (
         <div className="am-skeleton">

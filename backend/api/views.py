@@ -8,6 +8,8 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from rest_framework import status
 from django.utils import timezone
+import requests  # <— NUEVO
+
 
 #import google.generativeai as genai
 from .models import GenerationSession, RegenerationLog
@@ -59,6 +61,48 @@ def _normalize_difficulty(diff: str) -> str:
     if d.startswith("m"):
         return "Media"
     return "Difícil"
+
+
+PPLX_API = "https://api.perplexity.ai/chat/completions"
+PPLX_DEFAULT_MODEL = os.getenv("PPLX_MODEL", "llama-3.1-sonar-small-128k-chat")  # ajustable por .env
+
+def _pplx_call_json(prompt: str, max_tokens: int = 1200, temperature: float = 0.9) -> str:
+    api_key = os.getenv("PPLX_API_KEY")
+    if not api_key:
+        raise RuntimeError("PPLX_API_KEY not set")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": PPLX_DEFAULT_MODEL,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Eres un generador de preguntas de programación/CS. "
+                    "Debes responder **ÚNICAMENTE** con JSON válido, nada de texto extra ni explicaciones fuera del JSON."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+    }
+    r = requests.post(PPLX_API, headers=headers, json=body, timeout=60)
+    if r.status_code != 200:
+        # propagar texto de error, útil para detectar 'no credits'
+        raise RuntimeError(f"pplx_http_{r.status_code}: {r.text}")
+
+    data = r.json()
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except Exception:
+        raise RuntimeError("pplx_invalid_response")
+
+    return content  # cadena con JSON (según prompt)
+
 
 
 # =========================================================
@@ -176,6 +220,114 @@ def build_seen_set(session: GenerationSession, index: int = None) -> set:
 # =========================================================
 # Gemini prompts (modelo y helpers)
 # =========================================================
+
+
+def generate_questions_with_pplx(topic, difficulty, types, counts):
+    total = sum(int(counts.get(t, 0)) for t in types)
+
+    schema_hint = json.dumps(_json_schema_questions(), ensure_ascii=False)
+    prompt = f"""
+Genera exactamente {total} preguntas sobre "{topic}" en nivel {difficulty}.
+Distribución por tipo (counts): {json.dumps(counts, ensure_ascii=False)}.
+
+Política de calidad (OBLIGATORIA):
+- Sin sesgos ni estereotipos.
+- Sin lenguaje ofensivo.
+- Evita ambigüedades: no uses “etc.”, “…”, “depende”, “generalmente”.
+- mcq: 4 opciones distintas, answer ∈ {{A,B,C,D}}.
+- vf: answer ∈ {{Verdadero,Falso}}.
+- short: answer = texto corto.
+- explanation ≤ 40 palabras.
+
+Devuelve SOLO un JSON que cumpla con este schema:
+{schema_hint}
+"""
+    raw = _pplx_call_json(prompt, temperature=0.9, max_tokens=1800)
+    data = _extract_json(raw)
+
+    if "questions" not in data or not isinstance(data["questions"], list):
+        raise ValueError("Respuesta PPLX sin 'questions' válido")
+
+    expected = total
+    got = len(data["questions"])
+    if got < expected:
+        raise ValueError(f"Se esperaban {expected} preguntas y llegaron {got}")
+    if got > expected:
+        data["questions"] = data["questions"][:expected]
+
+    return data["questions"]
+
+
+def regenerate_question_with_pplx(topic, difficulty, qtype, base_question=None, avoid_phrases=None):
+    schema_hint = json.dumps(_json_schema_one(), ensure_ascii=False)
+    if qtype not in ("mcq", "vf", "short"):
+        qtype = "mcq"
+
+    seed_clause = ""
+    if base_question:
+        seed_txt = json.dumps({
+            "type": base_question.get("type"),
+            "question": base_question.get("question"),
+            "options": base_question.get("options"),
+            "answer": base_question.get("answer"),
+        }, ensure_ascii=False)
+        seed_clause = (
+            "Toma como referencia conceptual la pregunta base, pero PROHÍBE reutilizar el mismo enunciado, "
+            "ejemplos, números o nombres. Cambia foco o valores para una variante clara.\n"
+            f"Pregunta base:\n{seed_txt}\n"
+        )
+
+    avoid_txt = ""
+    if avoid_phrases:
+        bullets = "\n".join(f"- {p}" for p in list(avoid_phrases)[:8])
+        avoid_txt = f"Evita enunciados similares a:\n{bullets}\n"
+
+    rules = """
+Reglas de calidad:
+- Mantén tema y dificultad.
+- Prohibido reutilizar enunciado/datos de la base.
+- Sin sesgos/estereotipos ni lenguaje ofensivo.
+- Evita ambigüedades (no “etc.”, “…”, “depende”, “generalmente”).
+- mcq: 4 opciones nuevas; answer ∈ {A,B,C,D}.
+- vf: enunciado nuevo (no negación trivial); answer ∈ {"Verdadero","Falso"}.
+- short: respuesta breve; explanation ≤ 40 palabras.
+Responde SOLO con JSON del schema indicado.
+"""
+
+    prompt = f"""
+Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
+{seed_clause}
+{avoid_txt}
+{rules}
+
+Schema:
+{schema_hint}
+"""
+
+    raw = _pplx_call_json(prompt, temperature=0.95, max_tokens=800)
+    data = _extract_json(raw)
+
+    # Normalizaciones (mismas que Gemini)
+    if data.get("type") != qtype:
+        data["type"] = qtype
+    if qtype == "mcq":
+        opts = data.get("options", [])
+        if not isinstance(opts, list) or len(opts) != 4:
+            data["options"] = ["A) Opción 1", "B) Opción 2", "C) Opción 3", "D) Opción 4"]
+            data["answer"] = "A"
+        else:
+            ans = str(data.get("answer","A")).strip().upper()[:1]
+            if ans not in ("A","B","C","D"):
+                data["answer"] = "A"
+    if qtype == "vf":
+        ans = str(data.get("answer","")).strip().capitalize()
+        if ans not in ("Verdadero","Falso"):
+            data["answer"] = "Verdadero"
+
+    return data
+
+
+
 
 def _get_genai():
     """
@@ -371,6 +523,65 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
 
     return data
 
+
+
+def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
+    """
+    Devuelve (questions, provider_used, fallback_used, errors_map)
+    Si ambos fallan por créditos -> levanta RuntimeError('no_providers_available')
+    """
+    order = [preferred, "gemini" if preferred == "perplexity" else "perplexity"]
+    errors = {}
+    fallback_used = False
+
+    for i, prov in enumerate(order):
+        try:
+            if prov == "gemini":
+                qs = generate_questions_with_gemini(topic, difficulty, types, counts)
+            else:
+                qs = generate_questions_with_pplx(topic, difficulty, types, counts)
+            return qs, prov, fallback_used, errors
+        except Exception as e:
+            msg = str(e)
+            errors[prov] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
+            if i == 0:
+                fallback_used = True
+            continue
+
+    # Ambos fallaron:
+    if errors.get(order[0], {}).get("no_credits") and errors.get(order[1], {}).get("no_credits"):
+        raise RuntimeError("no_providers_available")
+    # Otro error (red, esquema, etc.)
+    raise RuntimeError(f"providers_failed: {errors}")
+
+
+def _regenerate_with_fallback(topic, difficulty, qtype, base_q, avoid_phrases, preferred: str):
+    """
+    Devuelve (question, provider_used, fallback_used, errors_map)
+    """
+    order = [preferred, "gemini" if preferred == "perplexity" else "perplexity"]
+    errors = {}
+    fallback_used = False
+
+    for i, prov in enumerate(order):
+        try:
+            if prov == "gemini":
+                q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases)
+            else:
+                q = regenerate_question_with_pplx(topic, difficulty, qtype, base_q, avoid_phrases)
+            return q, prov, fallback_used, errors
+        except Exception as e:
+            msg = str(e)
+            errors[prov] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
+            if i == 0:
+                fallback_used = True
+            continue
+
+    if errors.get(order[0], {}).get("no_credits") and errors.get(order[1], {}).get("no_credits"):
+        raise RuntimeError("no_providers_available")
+    raise RuntimeError(f"providers_failed: {errors}")
+
+
 # =========================================================
 # Taxonomía / Dominio (HU-06)
 # =========================================================
@@ -423,6 +634,30 @@ def find_category_for_topic(topic):
         if cat in t or t in cat:
             return cat
     return None
+
+
+# ---------------------------
+# Proveedor y fallback
+# ---------------------------
+
+def _header_provider(request) -> str:
+    """Lee X-LLM-Provider y normaliza -> 'perplexity' | 'gemini'."""
+    raw = (request.headers.get("X-LLM-Provider") or "").strip().lower()
+    if raw.startswith("gemini"):
+        return "gemini"
+    if raw in ("perplexity", "pplx"):
+        return "perplexity"
+    # por defecto, lo que tengas como preferido
+    return "perplexity"
+
+def _is_no_credits_msg(msg: str) -> bool:
+    m = (msg or "").lower()
+    # heurística suficiente para 402/429/quotas/creditos
+    return any(kw in m for kw in [
+        "quota", "over quota", "insufficient", "billing", "payment required",
+        "credit", "out of credits", "429", "402"
+    ])
+
 
 
 # =========================================================
@@ -507,129 +742,100 @@ def preview_questions(request):
     types = list(dict.fromkeys(types))
     debug = request.GET.get('debug') == '1'
 
-    gemini_error = None
+    preferred = _header_provider(request)
     try:
-        if os.getenv('GEMINI_API_KEY'):
-            generated = generate_questions_with_gemini(topic, difficulty, types, counts)
+        generated, provider_used, did_fallback, errors = _generate_with_fallback(
+            topic, difficulty, types, counts, preferred
+        )
 
-            # HU-08 moderación (suave) + anti-repetición en una misma hornada
-            clean = []
-            moderation = {"flagged": 0, "details": []}
-            seen = set()  # enunciados aceptados en este batch
+        # === Moderación + anti-dup como ya lo tenías ===
+        clean = []
+        moderation = {"flagged": 0, "details": []}
+        seen = set()
 
-            for i, q in enumerate(generated):
-                issues = review_question(q)
-                sev = moderation_severity(issues)
+        for i, q in enumerate(generated):
+            issues = review_question(q)
+            sev = moderation_severity(issues)
+            is_dup = _norm_for_cmp(q.get("question","")) in seen
 
-                # anti-dup inmediato
-                is_dup = _norm_for_cmp(q.get("question","")) in seen
+            if not issues and not is_dup:
+                clean.append(q)
+                seen.add(_norm_for_cmp(q.get("question","")))
+                continue
 
-                if not issues and not is_dup:
-                    clean.append(q)
-                    seen.add(_norm_for_cmp(q.get("question","")))
-                    continue
+            moderation["flagged"] += 1
+            moderation["details"].append({"index": i, "issues": issues, "severity": sev, "dup": is_dup})
 
-                moderation["flagged"] += 1
-                moderation["details"].append({"index": i, "issues": issues, "severity": sev, "dup": is_dup})
-
-                if sev == "severe":
-                    # reintento obligatorio
-                    try:
-                        fixed = regenerate_question_with_gemini(topic, difficulty, q.get("type","mcq"), q, avoid_phrases=seen)
-                        if moderation_severity(review_question(fixed)) != "severe":
-                            clean.append(fixed)
-                            seen.add(_norm_for_cmp(fixed.get("question","")))
-                        else:
-                            # fallback seguro
-                            clean.append({
-                                "type": q.get("type","mcq"),
-                                "question": f"[{topic}] Pregunta ajustada por moderación — describe el concepto con claridad.",
-                                "options": ["A) Definición correcta","B) Distractor 1","C) Distractor 2","D) Distractor 3"] if q.get("type")=="mcq" else None,
-                                "answer": "A" if q.get("type")=="mcq" else ("Verdadero" if q.get("type")=="vf" else "Respuesta breve"),
-                                "explanation": "Ajuste automático por reglas de calidad (HU-08)."
-                            })
-                    except Exception:
+            if sev == "severe":
+                try:
+                    fixed = _regenerate_with_fallback(topic, difficulty, q.get("type","mcq"), q, seen, provider_used)[0]
+                    if moderation_severity(review_question(fixed)) != "severe":
+                        clean.append(fixed)
+                        seen.add(_norm_for_cmp(fixed.get("question","")))
+                    else:
                         clean.append({
                             "type": q.get("type","mcq"),
-                            "question": f"[{topic}] Pregunta ajustada por moderación — redacta con claridad.",
-                            "options": ["A) Opción 1","B) Opción 2","C) Opción 3","D) Opción 4"] if q.get("type")=="mcq" else None,
+                            "question": f"[{topic}] Pregunta ajustada por moderación — describe el concepto con claridad.",
+                            "options": ["A) Definición correcta","B) Distractor 1","C) Distractor 2","D) Distractor 3"] if q.get("type")=="mcq" else None,
                             "answer": "A" if q.get("type")=="mcq" else ("Verdadero" if q.get("type")=="vf" else "Respuesta breve"),
                             "explanation": "Ajuste automático por reglas de calidad (HU-08)."
                         })
-                else:
-                    # minor/duplicado: intenta una vez; si no mejora, acepta original
-                    try:
-                        fixed = regenerate_question_with_gemini(topic, difficulty, q.get("type","mcq"), q, avoid_phrases=seen)
-                        if moderation_severity(review_question(fixed)) == "severe":
-                            candidate = q
-                        else:
-                            candidate = fixed
-                    except Exception:
-                        candidate = q
-                    clean.append(candidate)
-                    seen.add(_norm_for_cmp(candidate.get("question","")))
-
-            generated = clean
-
-            # Persistimos preview
-            if session:
-                session.latest_preview = generated
-                session.save(update_fields=["latest_preview"])
-
-            resp = {'preview': generated, 'source': 'gemini'}
-            if debug:
-                resp['debug'] = {
-                    'env_key_present': True,
-                    'topic': topic, 'difficulty': difficulty,
-                    'types': types, 'counts': counts,
-                    'moderation': moderation
-                }
-            return JsonResponse(resp, status=200)
-        else:
-            gemini_error = "GEMINI_API_KEY not set"
-    except Exception as e:
-        gemini_error = str(e)
-
-    # fallback local
-    preview = []
-    for t in types:
-        n = int(counts.get(t,0))
-        for i in range(1, n+1):
-            if t == 'mcq':
-                preview.append({
-                    'type': 'mcq',
-                    'question': f'[{topic}] Pregunta MCQ {i} ({difficulty}) — enunciado ejemplo',
-                    'options': ['A) ...','B) ...','C) ...','D) ...'],
-                    'answer': 'A',
-                    'explanation': 'Explicación breve ≤40 palabras.'
-                })
-            elif t == 'vf':
-                preview.append({
-                    'type': 'vf',
-                    'question': f'[{topic}] Pregunta V/F {i} ({difficulty}) — enunciado ejemplo',
-                    'answer': 'Verdadero',
-                    'explanation': 'Justificación ≤40 palabras.'
-                })
+                except Exception:
+                    clean.append({
+                        "type": q.get("type","mcq"),
+                        "question": f"[{topic}] Pregunta ajustada por moderación — redacta con claridad.",
+                        "options": ["A) Opción 1","B) Opción 2","C) Opción 3","D) Opción 4"] if q.get("type")=="mcq" else None,
+                        "answer": "A" if q.get("type")=="mcq" else ("Verdadero" if q.get("type")=="vf" else "Respuesta breve"),
+                        "explanation": "Ajuste automático por reglas de calidad (HU-08)."
+                    })
             else:
-                preview.append({
-                    'type': 'short',
-                    'question': f'[{topic}] Pregunta corta {i} ({difficulty}) — enunciado ejemplo',
-                    'answer': 'Respuesta esperada (criterio de corrección).'
-                })
+                try:
+                    fixed = _regenerate_with_fallback(topic, difficulty, q.get("type","mcq"), q, seen, provider_used)[0]
+                    candidate = fixed if moderation_severity(review_question(fixed)) != "severe" else q
+                except Exception:
+                    candidate = q
+                clean.append(candidate)
+                seen.add(_norm_for_cmp(candidate.get("question","")))
 
-    if session:
-        session.latest_preview = preview
-        session.save(update_fields=["latest_preview"])
+        generated = clean
 
-    resp = {'preview': preview, 'source': 'placeholder'}
-    if debug:
-        resp['debug'] = {
-            'env_key_present': bool(os.getenv('GEMINI_API_KEY')),
-            'gemini_error': gemini_error,
-            'topic': topic, 'difficulty': difficulty,
-            'types': types, 'counts': counts
+        if session:
+            session.latest_preview = generated
+            session.save(update_fields=["latest_preview"])
+
+        resp = {
+            'preview': generated,
+            'source': provider_used,
+            'fallback_used': did_fallback
         }
-    return JsonResponse(resp, status=200)
+        if debug:
+            resp['debug'] = {
+                'preferred': preferred,
+                'errors': errors,
+                'topic': topic, 'difficulty': difficulty, 'types': types, 'counts': counts,
+                'moderation': moderation
+            }
+        response = JsonResponse(resp, status=200)
+        response["X-LLM-Effective-Provider"] = provider_used
+        response["X-LLM-Fallback"] = "1" if did_fallback else "0"
+        return response
+
+
+    except RuntimeError as e:
+        if str(e) == "no_providers_available":
+            return JsonResponse(
+                {
+                    "error": "no_providers_available",
+                    "message": "No hay créditos disponibles en Perplexity ni en Gemini.",
+                },
+                status=503
+            )
+        # otros errores
+        return JsonResponse(
+            {"error": "providers_failed", "message": str(e)},
+            status=500
+        )
+
 
 
 @api_view(['POST'])
@@ -670,12 +876,10 @@ def regenerate_question(request):
     qtype = qtype or "mcq"
     topic = session.topic
     difficulty = session.difficulty
+    preferred = _header_provider(request)
 
     gemini_error = None
     try:
-        if not os.getenv("GEMINI_API_KEY"):
-            raise RuntimeError("GEMINI_API_KEY not set")
-
         # Anti-repetición con historial del índice
         seen = build_seen_set(session, index=index)
 
@@ -683,21 +887,22 @@ def regenerate_question(request):
             return _norm_for_cmp(qobj.get("question","")) in seen
 
         attempts = 0
+        retry_used = False
         while True:
             attempts += 1
-            new_q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases=seen)
+            new_q, provider_used, did_fallback, errors = _regenerate_with_fallback(
+                topic, difficulty, qtype, base_q, seen, preferred
+            )
             issues = review_question(new_q)
             sev = moderation_severity(issues)
             dup = _is_dup(new_q)
 
             if sev != "severe" and not dup:
-                break  # aceptable
+                break
 
-            # si severo o duplicado, intentamos de nuevo
             seen.add(_norm_for_cmp(new_q.get("question","")))
             retry_used = True
             if attempts >= 3:
-                # Último recurso: variante segura (sin bajar calidad de forma drástica)
                 if qtype == "mcq":
                     new_q = {
                         "type": "mcq",
@@ -709,7 +914,7 @@ def regenerate_question(request):
                 elif qtype == "vf":
                     new_q = {
                         "type": "vf",
-                        "question": f"En {topic}, el tiempo de ejecución asintótico se expresa usando notación O grande.",
+                        "question": f"En {topic}, el tiempo de ejecución asintótico se expresa con O grande.",
                         "answer": "Verdadero",
                         "explanation": "Enunciado claro y objetivo."
                     }
@@ -720,13 +925,20 @@ def regenerate_question(request):
                         "answer": "Definición concisa.",
                         "explanation": "Variante segura."
                     }
+                provider_used = "local_safe"
+                did_fallback = True
                 break
 
-    except Exception as e:
+    except RuntimeError as e:
+        if str(e) == "no_providers_available":
+            return JsonResponse(
+                {"error": "no_providers_available", "message": "Sin créditos en ambos proveedores."},
+                status=503
+            )
         gemini_error = str(e)
+        # fallback local de emergencia:
         import random, uuid as _uuid
         uid = str(_uuid.uuid4())[:8]
-
         if qtype == "mcq":
             new_q = {
                 "type": "mcq",
@@ -746,7 +958,7 @@ def regenerate_question(request):
                 "type": "vf",
                 "question": stmt,
                 "answer": random.choice(["Verdadero","Falso"]),
-                "explanation": "Variante local; reemplaza con Gemini en producción."
+                "explanation": "Variante local; reemplaza con LLM en producción."
             }
         else:
             new_q = {
@@ -755,29 +967,37 @@ def regenerate_question(request):
                 "answer": "Respuesta esperada breve.",
                 "explanation": "Variante local."
             }
+        provider_used = "local_fallback"
+        retry_used = True
 
-    # Log de regeneración
+    # Log de regeneración (igual)
     try:
         RegenerationLog.objects.create(
-            session=session,
-            index=index,
-            old_question=base_q or {},
-            new_question=new_q
+            session=session, index=index,
+            old_question=base_q or {}, new_question=new_q
         )
     except Exception:
         pass
 
-    resp = {"question": new_q, "source": "gemini" if not gemini_error else "placeholder"}
+    resp = {
+        "question": new_q,
+        "source": provider_used
+    }
     if debug:
         resp["debug"] = {
-            "env_key_present": bool(os.getenv("GEMINI_API_KEY")),
+            "env_key_present": bool(os.getenv("GEMINI_API_KEY")) or bool(os.getenv("PPLX_API_KEY")),
             "gemini_error": gemini_error,
             "topic": topic, "difficulty": difficulty, "type": qtype,
             "base_available": base_q is not None,
             "moderation_issues": issues,
             "moderation_retry": retry_used,
         }
-    return JsonResponse(resp, status=200)
+    response = JsonResponse(resp, status=200)
+    response["X-LLM-Effective-Provider"] = provider_used
+    response["X-LLM-Fallback"] = "1" if did_fallback else "0"
+    return response
+
+
 
 
 @api_view(['POST'])

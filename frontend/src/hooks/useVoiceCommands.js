@@ -1,93 +1,56 @@
-// frontend/src/hooks/useVoiceCommands.js
+import { useState, useCallback } from "react";
+import { getBackendHealth, ttsSpeak, sttRecognizeBlob } from "../services/voiceApi";
+import { logSTTEvent, logTTSEvent } from "../services/voiceMetricsService";
 
-import { useState, useCallback, useEffect } from 'react';
-import intentRouter from '../services/intentRouter';
+export function useVoiceCommands({ sessionId } = {}) {
+  const [backendHealth, setBackendHealth] = useState({ status: "unknown", backends: {} });
 
-/**
- * Hook para procesamiento de comandos de voz
- * Integra STT + Intent Router + Handlers
- */
-export const useVoiceCommands = (handlers = {}) => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [lastIntent, setLastIntent] = useState(null);
-  const [error, setError] = useState(null);
-  const [backendHealth, setBackendHealth] = useState(null);
-
-  // Check health on mount
-  useEffect(() => {
-    checkBackendHealth();
+  const checkBackendHealth = useCallback(async () => {
+    try {
+      const status = await getBackendHealth();
+      setBackendHealth(status);
+      return status;
+    } catch {
+      const fallback = { status: "warn", backends: {} };
+      setBackendHealth(fallback);
+      return fallback;
+    }
   }, []);
 
-  const checkBackendHealth = async () => {
+  const speak = useCallback(async (text, { voice, format } = {}) => {
+    const t0 = performance.now();
     try {
-      const health = await intentRouter.checkHealth();
-      setBackendHealth(health);
-    } catch (err) {
-      console.error('Health check failed:', err);
+      logTTSEvent("start", null, text?.length || 0, null, { voice, format }).catch(()=>{});
+      const blob = await ttsSpeak({ text, voice, format, sessionId });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.play().catch(()=>{});
+      const latency = Math.round(performance.now() - t0);
+      logTTSEvent("complete", latency, text?.length || 0, null, { voice, format }).catch(()=>{});
+      return { blob, url, latency_ms: latency };
+    } catch (e) {
+      const latency = Math.round(performance.now() - t0);
+      logTTSEvent("error", latency, text?.length || 0, null, { voice, format, error: String(e) }).catch(()=>{});
+      throw e;
     }
-  };
+  }, [sessionId]);
 
-  /**
-   * Procesa un comando de voz transcrito
-   */
-  const processCommand = useCallback(async (transcribedText) => {
-    if (!transcribedText || transcribedText.trim().length === 0) {
-      setError('Texto vacío');
-      return null;
-    }
-
-    setIsProcessing(true);
-    setError(null);
-
+  // ✅ ÚNICA implementación de transcribeBlob (no hay otra más abajo)
+  const transcribeBlob = useCallback(async (blob, { language = "es-ES", fmt = "ogg" } = {}) => {
+    const t0 = performance.now();
     try {
-      // 1. Parsear intención
-      const result = await intentRouter.parseIntent(transcribedText);
-      
-      console.log('Intent parsed:', result);
-      setLastIntent(result);
-
-      // 2. Ejecutar handler si existe
-      if (handlers[result.intent]) {
-        await handlers[result.intent](result.slots, result);
-      } else if (result.intent === 'unknown') {
-        console.warn('Intent not recognized:', transcribedText);
-        setError(`No entendí: "${transcribedText}"`);
-      }
-
-      return result;
-
-    } catch (err) {
-      console.error('Command processing error:', err);
-      setError('Error al procesar comando');
-      return null;
-
-    } finally {
-      setIsProcessing(false);
+      logSTTEvent("start", null, null, null, { language, fmt }).catch(()=>{});
+      const out = await sttRecognizeBlob({ blob, language, fmt, sessionId }); // <-- usa voiceApi
+      const latency = Math.round(performance.now() - t0);
+      const text = (out && (out.text || out.transcript || out.result?.text)) || ""; // tolerante
+      logSTTEvent("final", latency, text.length, out?.confidence ?? null, { language, fmt }).catch(()=>{});
+      return { ...out, text }; // garantiza 'text'
+    } catch (e) {
+      const latency = Math.round(performance.now() - t0);
+      logSTTEvent("error", latency, null, null, { language, fmt, error: String(e) }).catch(()=>{});
+      throw e;
     }
-  }, [handlers]);
+  }, [sessionId]);
 
-  /**
-   * Confirma una acción sensible (regenerar, exportar, etc.)
-   */
-  const confirmAction = useCallback(async (actionName, callback) => {
-    const confirmed = window.confirm(
-      `¿Estás seguro de ${actionName}? Esta acción no se puede deshacer.`
-    );
-
-    if (confirmed && callback) {
-      await callback();
-    }
-
-    return confirmed;
-  }, []);
-
-  return {
-    processCommand,
-    confirmAction,
-    isProcessing,
-    lastIntent,
-    error,
-    backendHealth,
-    checkBackendHealth
-  };
-};
+  return { backendHealth, checkBackendHealth, speak, transcribeBlob };
+}
