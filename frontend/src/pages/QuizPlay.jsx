@@ -606,6 +606,23 @@ export default function QuizPlay(props) {
       }
 
       // Leer pregunta
+      // Explicar pregunta (solo después de enviar el quiz)
+      if (/explain_question|explica|explicame|explicarle|explicar/.test(intent) || /explica|explicame|expl[ií]came|explicar/.test(text)) {
+        // Solo permitir si el usuario ya terminó el quiz
+        if (!submitted) {
+          try { await speak('Debes terminar el cuestionario antes de pedir explicaciones. Primero presiona "Calificar".').catch(()=>{}); } catch(e){}
+          return;
+        }
+        const idx = getSlot(res, 'index') || getSlot(res, 'count');
+        if (idx && idx >= 1 && idx <= questions.length) {
+          explainQuestion(idx - 1);
+        } else {
+          explainQuestion(currentQuestionIndex);
+        }
+        return;
+      }
+
+      // Leer pregunta
       if (/read_question|leer|lee/.test(intent) || /lee|leer/.test(text)) {
         const idx = getSlot(res, 'index') || getSlot(res, 'count');
         if (idx && idx >= 1 && idx <= questions.length) {
@@ -934,6 +951,31 @@ const readQuestion = async (idx) => {
   try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
 };
 
+// Explicar pregunta (lee la explicación o la respuesta correcta con TTS)
+const explainQuestion = async (idx) => {
+  const q = questions[idx];
+  if (!q) return;
+  const num = idx + 1;
+  // Preferir explicación; si no existe, leer la respuesta esperada
+  const expl = q.explanation && String(q.explanation).trim();
+  const answer = q.answer !== undefined && q.answer !== null ? String(q.answer) : null;
+
+  let texto = '';
+  if (expl && expl.length > 0) {
+    texto = `Explicación para la pregunta ${num}: ${expl}`;
+  } else if (answer) {
+    texto = `Respuesta esperada para la pregunta ${num}: ${answer}. No hay explicación disponible.`;
+  } else {
+    texto = `No hay explicación disponible para la pregunta ${num}.`;
+  }
+
+  try {
+    await speak(texto, { voice: "es-ES-AlvaroNeural" });
+  } catch (e) {
+    console.error('Error al ejecutar TTS para explicación', e);
+  }
+};
+
 // Dentro de QuizPlay.jsx
 const dictateForQuestion = async (idx) => {
   try {
@@ -1025,6 +1067,11 @@ const dictateForQuestion = async (idx) => {
  useEffect(() => {
    window.dictateForQuestion = dictateForQuestion;
  }, []);
+
+  // Exponer helper para debug: explicar pregunta desde consola
+  useEffect(() => {
+    window.explainQuestion = explainQuestion;
+  }, []);
 
 
 
