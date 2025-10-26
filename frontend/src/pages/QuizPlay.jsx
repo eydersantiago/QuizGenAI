@@ -7,6 +7,7 @@ import jsPDF from "jspdf";
 import Swal from "sweetalert2";
 import "../estilos/QuizPlay.css";
 import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
+import { getSlot } from '../utils/voiceParsing';
 import { useVoiceCommands } from "../hooks/useVoiceCommands";
 import { recordAudioWithFallback } from "../utils/audioRecorder";
 // import { startAzureSTT } from "../voice/azureClientSST";
@@ -438,6 +439,7 @@ export default function QuizPlay(props) {
   const [quizTitle, setQuizTitle] = useState("");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
+  // Referencias y estados necesarios por listeners/efectos (declarar antes de usarlos)
   // Referencia para timeout de auto-guardado
   const saveTimeoutRef = useRef(null);
 
@@ -445,6 +447,211 @@ export default function QuizPlay(props) {
   const [history, setHistory] = useState({});
   // Borradores de regeneración pendientes de confirmar: { [idx]: question }
   const [regenDrafts, setRegenDrafts] = useState({});
+
+  // Escuchar intents globales del widget de voz
+  useEffect(() => {
+    // use getSlot util to extract numbers/indices from the result/text
+
+  const handler = async (e) => {
+      const res = e.detail || {};
+  const intent = (res.intent || '').toString();
+  // Soporte para diferentes campos de transcripción (backend / Azure / streaming)
+  const text = (res.text || res.transcript || res.result?.text || res.DisplayText || res.displayText || '').toString().toLowerCase();
+
+      // normalizar intent para comparaciones robustas
+      const intentNorm = intent.toLowerCase();
+      const intentWords = intentNorm.replace(/[_-]/g, ' ');
+
+      const matchesAny = (words) => {
+        for (const w of words) {
+          if (intentWords.includes(w) || text.includes(w)) return true;
+        }
+        return false;
+      };
+
+      console.log('[Voice Intent] received:', intent, res);
+
+      // CONTEXTUAL: si estamos respondiendo preguntas, intentar mapear la voz a una respuesta
+      try {
+        // If user specified a question index ("pregunta 1, C"), prefer that index
+        const specifiedIdx = (getSlot(res, 'index') || getSlot(res, 'count'));
+        const targetIdx = specifiedIdx && Number(specifiedIdx) >= 1 && Number(specifiedIdx) <= questions.length
+          ? Number(specifiedIdx) - 1
+          : currentQuestionIndex;
+
+        // If the transcript includes an explicit question marker, strip it before parsing the answer
+        let answerText = (res.text || text || '').toString();
+        if (specifiedIdx) {
+          // Remove patterns like 'pregunta 1', 'pregunta 1,' or a leading '1,' that indicate the index
+          answerText = answerText.replace(/pregunta[s]?\s*(?:numero|nro|n\.?|#)?\s*\d{1,3}/i, '');
+          answerText = answerText.replace(/^\s*\d{1,3}\s*[,.:\-]?\s*/i, '');
+        }
+
+        const q = questions[targetIdx];
+        if (q) {
+          const parsedAnswer = parseSpokenAnswer(answerText, q);
+          if (parsedAnswer && parsedAnswer.ok) {
+            // aplicar respuesta según tipo
+            if (q.type === 'mcq') {
+              const letter = parsedAnswer.value; // 'A'..'D'
+              const optIdx = letter.charCodeAt(0) - 'A'.charCodeAt(0);
+              handleSelectMCQ(targetIdx, optIdx);
+              return; // acción tomada
+            } else if (q.type === 'vf') {
+              handleToggleVF(targetIdx, parsedAnswer.value);
+              return;
+            } else {
+              handleShortChange(targetIdx, parsedAnswer.value);
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error applying spoken answer:', e);
+      }
+
+      // Navegación
+      if (/navigate_next|siguiente|next|avanza|sigue/.test(intent) || /siguiente|adelante|avanza/.test(text)) {
+        setCurrentQuestionIndex((i) => Math.min(questions.length - 1, i + 1));
+        return;
+      }
+      if (/navigate_previous|anterior|back|volver/.test(intent) || /anterior|atrás|volver/.test(text)) {
+        setCurrentQuestionIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+
+      // PRIORIDAD: acciones estructurales (duplicar, eliminar, regenerar, exportar)
+      // Estas deben ejecutarse incluso si el backend devolvió otra intención (p.ej. read_question)
+      if (matchesAny(['duplicate', 'duplicar', 'clonar', 'copiar', 'copia'])) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
+        handleDuplicateQuestion(target);
+        try { await speak(`Duplicada la pregunta ${target + 1}`).catch(()=>{}); } catch(e){}
+        return;
+      }
+
+      if (matchesAny(['delete', 'eliminar', 'borrar', 'quitar', 'suprimir', 'remover', 'sacar'])) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
+        try {
+          handleDeleteQuestion(target);
+          await speak(`Pregunta ${target + 1} eliminada`).catch(()=>{});
+        } catch (e) {
+          console.error('Error deleting question via voice intent', e);
+        }
+        return;
+      }
+
+      if (matchesAny(['regenerate', 'regenerar', 'regenera', 'vuelve a generar', 'renovar', 'volver a generar'])) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
+        handleStartRegenerate(target);
+        return;
+      }
+
+      // Si ya existe una variante (regenDrafts[target]) permitir acciones por voz: reemplazar, cancelar, regenerar de nuevo
+      // Reemplazar / Confirmar reemplazo
+      if (matchesAny(['replace', 'reemplazar', 'confirmar reemplazo', 'aceptar', 'confirmar'])) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
+        if (regenDrafts && regenDrafts[target]) {
+          try {
+            await handleConfirmReplace(target);
+            try { await speak(`Pregunta ${target + 1} reemplazada`).catch(()=>{}); } catch(e){}
+          } catch (e) {
+            console.error('Error replacing question via voice', e);
+          }
+        } else {
+          try { await speak('No hay variante disponible para reemplazar en esa pregunta').catch(()=>{}); } catch(e){}
+        }
+        return;
+      }
+
+      // Cancelar variante (descartar draft)
+      if (matchesAny(['cancel', 'cancelar', 'descartar', 'no reemplazar'])) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
+        if (regenDrafts && regenDrafts[target]) {
+          try {
+            handleCancelRegenerate(target);
+            try { await speak(`Vista previa cancelada para la pregunta ${target + 1}`).catch(()=>{}); } catch(e){}
+          } catch (e) {
+            console.error('Error cancelling regenerate draft via voice', e);
+          }
+        } else {
+          try { await speak('No hay ninguna variante para cancelar en esa pregunta').catch(()=>{}); } catch(e){}
+        }
+        return;
+      }
+
+      // Regenerar de nuevo (generar otra variante)
+      if (matchesAny(['regenerate again', 'regenerar de nuevo', 'regenerar otra vez', 'regenerar de nuevo pregunta', 'regenerar otra'])) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
+        try {
+          await handleRegenerateAgain(target);
+          try { await speak(`Generando otra variante para la pregunta ${target + 1}`).catch(()=>{}); } catch(e){}
+        } catch (e) {
+          console.error('Error regenerating again via voice', e);
+        }
+        return;
+      }
+
+      if (matchesAny(['export', 'exportar', 'exporta', 'descargar', 'guardar', 'bajar'])) {
+        if (text.includes('pdf')) exportToPDF(questions, answers, submitted);
+        else if (text.includes('txt') || text.includes('texto')) exportToTXT(questions, answers, submitted);
+        else exportToPDF(questions, answers, submitted);
+        try { await speak('Exportado').catch(()=>{}); } catch(e){}
+        return;
+      }
+
+      // Leer pregunta
+      if (/read_question|leer|lee/.test(intent) || /lee|leer/.test(text)) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count');
+        if (idx && idx >= 1 && idx <= questions.length) {
+          readQuestion(idx - 1);
+        } else {
+          readQuestion(currentQuestionIndex);
+        }
+        return;
+      }
+
+      // Mostrar respuestas (pop-up)
+      if (/show_answers|mostrar|respuestas|muestra|ver respuestas/.test(intent) || /mostrar|respuestas|muestra|ver respuestas/.test(text)) {
+        const content = questions.map((q, i) => {
+          const ans = q.type === 'vf' ? String(q.answer) : String(q.answer || '');
+          return `${i + 1}. ${q.question}\nRespuesta: ${ans}\n`;
+        }).join('\n');
+        try {
+          Swal.fire({ title: 'Respuestas', html: `<pre style="text-align:left">${content}</pre>`, width: 700 });
+        } catch (e) {
+          alert(content);
+        }
+        return;
+      }
+
+      // Exportar: PDF o TXT
+      if (/export_quiz|exportar|exporta|descargar|guarda?r?/.test(intent) || /exporta|exportar|pdf|txt|descargar/.test(text)) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count');
+        // Si especifica PDF/TXT en la frase, preferirlo
+        if (/pdf/.test(text)) {
+          exportToPDF(questions, answers, submitted);
+          try { await speak('Exportado a PDF').catch(()=>{}); } catch(e){}
+        } else if (/txt/.test(text) || /texto/.test(text)) {
+          exportToTXT(questions, answers, submitted);
+          try { await speak('Exportado a TXT').catch(()=>{}); } catch(e){}
+        } else {
+          // default PDF
+          exportToPDF(questions, answers, submitted);
+          try { await speak('Exportado a PDF').catch(()=>{}); } catch(e){}
+        }
+        return;
+      }
+    };
+
+    window.addEventListener('voice:intent', handler);
+    return () => window.removeEventListener('voice:intent', handler);
+  }, [questions, currentQuestionIndex, answers, submitted, regenDrafts, speak]);
 
   const leerPreguntaActual = async () => {
     const q = questions[currentQuestionIndex];

@@ -31,3 +31,6 @@ frontend/build/
 # Others
 *.swp
 *.swo
+
+
+backend/tts_cache/

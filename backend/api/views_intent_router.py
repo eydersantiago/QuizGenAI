@@ -74,7 +74,7 @@ _PATTERNS = [
     ("navigate_next", re.compile(r"\b(siguiente|próxima?|continua?r?|adelante|next|avanza|sigue)\b", re.I)),
     ("navigate_previous", re.compile(r"\b(anterior|atrás|volver|back)\b", re.I)),
     ("generate_quiz", re.compile(r"\b(genera?r?|crea?r?|arma|haz|hazme|quiz|cuestionario|test)\b", re.I)),
-    ("read_question", re.compile(r"\b(lee?r?|pregunta)\b", re.I)),
+    ("read_question", re.compile(r"\b(lee?r?)\b", re.I)),
     ("show_answers", re.compile(r"\b(muestra?r?|mostrar|ver|respuestas?|opciones)\b", re.I)),
     ("repeat", re.compile(r"\b(repite?r?|otra\s+vez|de\s+nuevo)\b", re.I)),
     ("pause", re.compile(r"\b(pausa?r?|detene?r?|stop)\b", re.I)),
