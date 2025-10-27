@@ -1833,7 +1833,7 @@ export default function QuizPlay(props) {
                         <button
                           className="btn btn-purple-outline"
                           type="button"
-                          onClick={() => ListenForHint(idx)}
+                          onClick={() => explainQuestion(idx)}
                         >
                           💡 Pista por voz
                         </button>
