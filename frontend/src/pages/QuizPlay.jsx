@@ -76,7 +76,7 @@ async function webmToWav(blob) {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   const decoded = await ctx.decodeAudioData(arrayBuf.slice(0)); // decode
   const wavBlob = audioBufferToWavPcm16(decoded);
-  try { ctx.close(); } catch {}
+  try { ctx.close(); } catch { }
   return wavBlob;
 }
 
@@ -146,8 +146,8 @@ const exportToPDF = (questions, answers, submitted) => {
         userAnswer === true
           ? "Verdadero"
           : userAnswer === false
-          ? "Falso"
-          : "Sin responder";
+            ? "Falso"
+            : "Sin responder";
     } else {
       userAnswerText += userAnswer || "Sin responder";
     }
@@ -221,8 +221,8 @@ const exportToTXT = (questions, answers, submitted) => {
         userAnswer === true
           ? "Verdadero"
           : userAnswer === false
-          ? "Falso"
-          : "Sin responder";
+            ? "Falso"
+            : "Sin responder";
     } else {
       userAnswerText += userAnswer || "Sin responder";
     }
@@ -261,19 +261,19 @@ const exportToTXT = (questions, answers, submitted) => {
 };
 
 // Normaliza: minúsculas + sin tildes
-const norm = (s="") =>
+const norm = (s = "") =>
   s.toLowerCase()
-   .normalize("NFD")
-   .replace(/\p{Diacritic}/gu, "")
-   .trim();
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim();
 
 // Mapea palabras/numero -> letra
 const numToLetter = (w) => {
   const m = {
-    "1":"A","uno":"A","primera":"A","la a":"A","a":"A",
-    "2":"B","dos":"B","segunda":"B","la b":"B","b":"B",
-    "3":"C","tres":"C","tercera":"C","la c":"C","c":"C",
-    "4":"D","cuatro":"D","cuarta":"D","la d":"D","d":"D",
+    "1": "A", "uno": "A", "primera": "A", "la a": "A", "a": "A",
+    "2": "B", "dos": "B", "segunda": "B", "la b": "B", "b": "B",
+    "3": "C", "tres": "C", "tercera": "C", "la c": "C", "c": "C",
+    "4": "D", "cuatro": "D", "cuarta": "D", "la d": "D", "d": "D",
   };
   return m[w] || null;
 };
@@ -326,22 +326,22 @@ function extractVF(text) {
  * - short -> value = string transcrito
  */
 function parseSpokenAnswer(text, question) {
-  if (!text || !question) return { ok:false };
+  if (!text || !question) return { ok: false };
 
   if (question.type === "mcq") {
     const letter = extractLetter(text);
-    if (letter) return { ok:true, value:letter };
+    if (letter) return { ok: true, value: letter };
     // fallback: si dijo "opcion primera/segunda", etc. ya lo cubre extractLetter
-    return { ok:false };
+    return { ok: false };
   }
 
   if (question.type === "vf") {
     const v = extractVF(text);
-    return v === null ? { ok:false } : { ok:true, value:v };
+    return v === null ? { ok: false } : { ok: true, value: v };
   }
 
   // short answer: usamos el texto completo
-  return { ok:true, value:text.trim() };
+  return { ok: true, value: text.trim() };
 }
 
 function LoadingScreen({ approx = 90 }) {
@@ -374,9 +374,9 @@ function LoadingScreen({ approx = 90 }) {
   // Texto de estado dinámico
   const status =
     pct < 25 ? "Inicializando motor de preguntas…" :
-    pct < 50 ? "Consultando proveedor LLM y preparando sesión…" :
-    pct < 75 ? "Cocinando ítems y opciones con explicaciones…" :
-               "Puliendo formato y validaciones…";
+      pct < 50 ? "Consultando proveedor LLM y preparando sesión…" :
+        pct < 75 ? "Cocinando ítems y opciones con explicaciones…" :
+          "Puliendo formato y validaciones…";
 
   return (
     <main className="qp-loading-screen" role="alert" aria-busy="true" aria-live="polite">
@@ -464,11 +464,11 @@ export default function QuizPlay(props) {
   useEffect(() => {
     // use getSlot util to extract numbers/indices from the result/text
 
-  const handler = async (e) => {
+    const handler = async (e) => {
       const res = e.detail || {};
-  const intent = (res.intent || '').toString();
-  // Soporte para diferentes campos de transcripción (backend / Azure / streaming)
-  const text = (res.text || res.transcript || res.result?.text || res.DisplayText || res.displayText || '').toString().toLowerCase();
+      const intent = (res.intent || '').toString();
+      // Soporte para diferentes campos de transcripción (backend / Azure / streaming)
+      const text = (res.text || res.transcript || res.result?.text || res.DisplayText || res.displayText || '').toString().toLowerCase();
 
       // normalizar intent para comparaciones robustas
       const intentNorm = intent.toLowerCase();
@@ -539,19 +539,19 @@ export default function QuizPlay(props) {
       // PRIORIDAD: acciones estructurales (duplicar, eliminar, regenerar, exportar)
       // Estas deben ejecutarse incluso si el backend devolvió otra intención (p.ej. read_question)
       if (matchesAny(['duplicate', 'duplicar', 'clonar', 'copiar', 'copia'])) {
-        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/) || [])[1];
         const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
         handleDuplicateQuestion(target);
-        try { await speak(`Duplicada la pregunta ${target + 1}`).catch(()=>{}); } catch(e){}
+        try { await speak(`Duplicada la pregunta ${target + 1}`).catch(() => { }); } catch (e) { }
         return;
       }
 
       if (matchesAny(['delete', 'eliminar', 'borrar', 'quitar', 'suprimir', 'remover', 'sacar'])) {
-        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/) || [])[1];
         const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
         try {
           handleDeleteQuestion(target);
-          await speak(`Pregunta ${target + 1} eliminada`).catch(()=>{});
+          await speak(`Pregunta ${target + 1} eliminada`).catch(() => { });
         } catch (e) {
           console.error('Error deleting question via voice intent', e);
         }
@@ -559,7 +559,7 @@ export default function QuizPlay(props) {
       }
 
       if (matchesAny(['regenerate', 'regenerar', 'regenera', 'vuelve a generar', 'renovar', 'volver a generar'])) {
-        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/) || [])[1];
         const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
         handleStartRegenerate(target);
         return;
@@ -568,45 +568,45 @@ export default function QuizPlay(props) {
       // Si ya existe una variante (regenDrafts[target]) permitir acciones por voz: reemplazar, cancelar, regenerar de nuevo
       // Reemplazar / Confirmar reemplazo
       if (matchesAny(['replace', 'reemplazar', 'confirmar reemplazo', 'aceptar', 'confirmar'])) {
-        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/) || [])[1];
         const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
         if (regenDrafts && regenDrafts[target]) {
           try {
             await handleConfirmReplace(target);
-            try { await speak(`Pregunta ${target + 1} reemplazada`).catch(()=>{}); } catch(e){}
+            try { await speak(`Pregunta ${target + 1} reemplazada`).catch(() => { }); } catch (e) { }
           } catch (e) {
             console.error('Error replacing question via voice', e);
           }
         } else {
-          try { await speak('No hay variante disponible para reemplazar en esa pregunta').catch(()=>{}); } catch(e){}
+          try { await speak('No hay variante disponible para reemplazar en esa pregunta').catch(() => { }); } catch (e) { }
         }
         return;
       }
 
       // Cancelar variante (descartar draft)
       if (matchesAny(['cancel', 'cancelar', 'descartar', 'no reemplazar'])) {
-        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/) || [])[1];
         const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
         if (regenDrafts && regenDrafts[target]) {
           try {
             handleCancelRegenerate(target);
-            try { await speak(`Vista previa cancelada para la pregunta ${target + 1}`).catch(()=>{}); } catch(e){}
+            try { await speak(`Vista previa cancelada para la pregunta ${target + 1}`).catch(() => { }); } catch (e) { }
           } catch (e) {
             console.error('Error cancelling regenerate draft via voice', e);
           }
         } else {
-          try { await speak('No hay ninguna variante para cancelar en esa pregunta').catch(()=>{}); } catch(e){}
+          try { await speak('No hay ninguna variante para cancelar en esa pregunta').catch(() => { }); } catch (e) { }
         }
         return;
       }
 
       // Regenerar de nuevo (generar otra variante)
       if (matchesAny(['regenerate again', 'regenerar de nuevo', 'regenerar otra vez', 'regenerar de nuevo pregunta', 'regenerar otra'])) {
-        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/)||[])[1];
+        const idx = getSlot(res, 'index') || getSlot(res, 'count') || (text.match(/\b(\d{1,3})\b/) || [])[1];
         const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length) ? Number(idx) - 1 : currentQuestionIndex;
         try {
           await handleRegenerateAgain(target);
-          try { await speak(`Generando otra variante para la pregunta ${target + 1}`).catch(()=>{}); } catch(e){}
+          try { await speak(`Generando otra variante para la pregunta ${target + 1}`).catch(() => { }); } catch (e) { }
         } catch (e) {
           console.error('Error regenerating again via voice', e);
         }
@@ -617,7 +617,7 @@ export default function QuizPlay(props) {
         if (text.includes('pdf')) exportToPDF(questions, answers, submitted);
         else if (text.includes('txt') || text.includes('texto')) exportToTXT(questions, answers, submitted);
         else exportToPDF(questions, answers, submitted);
-        try { await speak('Exportado').catch(()=>{}); } catch(e){}
+        try { await speak('Exportado').catch(() => { }); } catch (e) { }
         return;
       }
 
@@ -626,7 +626,7 @@ export default function QuizPlay(props) {
       if (/explain_question|explica|explicame|explicarle|explicar/.test(intent) || /explica|explicame|expl[ií]came|explicar/.test(text)) {
         // Solo permitir si el usuario ya terminó el quiz
         if (!submitted) {
-          try { await speak('Debes terminar el cuestionario antes de pedir explicaciones. Primero presiona "Calificar".').catch(()=>{}); } catch(e){}
+          try { await speak('Debes terminar el cuestionario antes de pedir explicaciones. Primero presiona "Calificar".').catch(() => { }); } catch (e) { }
           return;
         }
         const idx = getSlot(res, 'index') || getSlot(res, 'count');
@@ -669,14 +669,14 @@ export default function QuizPlay(props) {
         // Si especifica PDF/TXT en la frase, preferirlo
         if (/pdf/.test(text)) {
           exportToPDF(questions, answers, submitted);
-          try { await speak('Exportado a PDF').catch(()=>{}); } catch(e){}
+          try { await speak('Exportado a PDF').catch(() => { }); } catch (e) { }
         } else if (/txt/.test(text) || /texto/.test(text)) {
           exportToTXT(questions, answers, submitted);
-          try { await speak('Exportado a TXT').catch(()=>{}); } catch(e){}
+          try { await speak('Exportado a TXT').catch(() => { }); } catch (e) { }
         } else {
           // default PDF
           exportToPDF(questions, answers, submitted);
-          try { await speak('Exportado a PDF').catch(()=>{}); } catch(e){}
+          try { await speak('Exportado a PDF').catch(() => { }); } catch (e) { }
         }
         return;
       }
@@ -693,7 +693,7 @@ export default function QuizPlay(props) {
     const texto = Array.isArray(q.options) && q.options.length
       ? `${enunciado}. ${q.options.map((o, j) => `Opción ${j + 1}: ${o}`).join(". ")}`
       : enunciado;
-    try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
+    try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch { }
   };
 
   // Helpers para mapear STT -> respuesta
@@ -741,7 +741,7 @@ export default function QuizPlay(props) {
   //   }
   // };
 
-  
+
 
 
 
@@ -982,74 +982,74 @@ export default function QuizPlay(props) {
   // ================================================================
 
   // Leer una pregunta específica
-const readQuestion = async (idx) => {
-  const q = questions[idx];
-  if (!q) return;
-  const texto = q.options?.length
-    ? `${q.question}. ${q.options.map((o, j) => `Opción ${j + 1}: ${o}`).join(". ")}`
-    : q.question;
-  try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch {}
-};
+  const readQuestion = async (idx) => {
+    const q = questions[idx];
+    if (!q) return;
+    const texto = q.options?.length
+      ? `${q.question}. ${q.options.map((o, j) => `Opción ${j + 1}: ${o}`).join(". ")}`
+      : q.question;
+    try { await speak(texto, { voice: "es-ES-AlvaroNeural" }); } catch { }
+  };
 
-// Explicar pregunta (lee la explicación o la respuesta correcta con TTS)
-const explainQuestion = async (idx) => {
-  const q = questions[idx];
-  if (!q) return;
-  const num = idx + 1;
-  // Preferir explicación; si no existe, leer la respuesta esperada
-  const expl = q.explanation && String(q.explanation).trim();
-  const answer = q.answer !== undefined && q.answer !== null ? String(q.answer) : null;
+  // Explicar pregunta (lee la explicación o la respuesta correcta con TTS)
+  const explainQuestion = async (idx) => {
+    const q = questions[idx];
+    if (!q) return;
+    const num = idx + 1;
+    // Preferir explicación; si no existe, leer la respuesta esperada
+    const expl = q.explanation && String(q.explanation).trim();
+    const answer = q.answer !== undefined && q.answer !== null ? String(q.answer) : null;
 
-  let texto = '';
-  if (expl && expl.length > 0) {
-    texto = `Explicación para la pregunta ${num}: ${expl}`;
-  } else if (answer) {
-    texto = `Respuesta esperada para la pregunta ${num}: ${answer}. No hay explicación disponible.`;
-  } else {
-    texto = `No hay explicación disponible para la pregunta ${num}.`;
-  }
-
-  try {
-    await speak(texto, { voice: "es-ES-AlvaroNeural" });
-  } catch (e) {
-    console.error('Error al ejecutar TTS para explicación', e);
-  }
-};
-
-// Dentro de QuizPlay.jsx
-const dictateForQuestion = async (idx) => {
-  try {
-    console.log("[dictateForQuestion] START idx=", idx);
-
-    // 1) Graba 5s (webm/opus, ogg, etc. según navegador)
-    const { blob } = await recordAudioWithFallback(5);
-    console.log("[dictateForQuestion] raw blob:", blob?.type, blob?.size);
-
-    if (!blob || blob.size < 2048) {
-      console.warn("Audio vacío o muy pequeño", { size: blob?.size, type: blob?.type });
-      Swal.fire("No se oyó nada", "Intenta hablar más cerca del micrófono.", "info");
-      return;
+    let texto = '';
+    if (expl && expl.length > 0) {
+      texto = `Explicación para la pregunta ${num}: ${expl}`;
+    } else if (answer) {
+      texto = `Respuesta esperada para la pregunta ${num}: ${answer}. No hay explicación disponible.`;
+    } else {
+      texto = `No hay explicación disponible para la pregunta ${num}.`;
     }
 
-    // 2) Convierte SIEMPRE a WAV PCM16
-    const wav = await webmToWav(blob);
-    console.log("[dictateForQuestion] wav blob:", wav?.type, wav?.size);
+    try {
+      await speak(texto, { voice: "es-ES-AlvaroNeural" });
+    } catch (e) {
+      console.error('Error al ejecutar TTS para explicación', e);
+    }
+  };
 
-    // 3) Transcribe WAV
-    const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
-    console.log("[dictateForQuestion] STT response:", out);
+  // Dentro de QuizPlay.jsx
+  const dictateForQuestion = async (idx) => {
+    try {
+      console.log("[dictateForQuestion] START idx=", idx);
 
-    // 4) Extrae texto de posibles campos
-    const said =
-      (out && (out.text || out.transcript || out.result?.text || out.DisplayText || out.NBest?.[0]?.Lexical))?.trim() || "";
+      // 1) Graba 5s (webm/opus, ogg, etc. según navegador)
+      const { blob } = await recordAudioWithFallback(5);
+      console.log("[dictateForQuestion] raw blob:", blob?.type, blob?.size);
 
-    console.log("[dictateForQuestion] said:", JSON.stringify(said));
+      if (!blob || blob.size < 2048) {
+        console.warn("Audio vacío o muy pequeño", { size: blob?.size, type: blob?.type });
+        Swal.fire("No se oyó nada", "Intenta hablar más cerca del micrófono.", "info");
+        return;
+      }
 
-    if (!said) {
-      Swal.fire({
-        icon: "info",
-        title: "Sin texto reconocido",
-        html: `
+      // 2) Convierte SIEMPRE a WAV PCM16
+      const wav = await webmToWav(blob);
+      console.log("[dictateForQuestion] wav blob:", wav?.type, wav?.size);
+
+      // 3) Transcribe WAV
+      const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
+      console.log("[dictateForQuestion] STT response:", out);
+
+      // 4) Extrae texto de posibles campos
+      const said =
+        (out && (out.text || out.transcript || out.result?.text || out.DisplayText || out.NBest?.[0]?.Lexical))?.trim() || "";
+
+      console.log("[dictateForQuestion] said:", JSON.stringify(said));
+
+      if (!said) {
+        Swal.fire({
+          icon: "info",
+          title: "Sin texto reconocido",
+          html: `
           <div style="text-align:left">
             • Verifica el volumen/micrófono.<br/>
             • Habla durante ~2–3 segundos.<br/>
@@ -1057,56 +1057,56 @@ const dictateForQuestion = async (idx) => {
             • Enviado: WAV (${wav.size} bytes)
           </div>
         `,
-      });
-      return;
+        });
+        return;
+      }
+
+      // 5) Parsear y marcar
+      const q = questions[idx];
+      const parsed = parseSpokenAnswer(said, q);
+      console.debug("[dictateForQuestion] parsed:", parsed, "type=", q?.type);
+
+      if (!parsed.ok) {
+        Swal.fire("No entendido", `No pude interpretar: "${said}"`, "info");
+        return;
+      }
+
+      if (q.type === "mcq") {
+        const letter = parsed.value; // "A"..."D"
+        const optIdx = letter.charCodeAt(0) - "A".charCodeAt(0);
+        handleSelectMCQ(idx, optIdx);
+      } else if (q.type === "vf") {
+        handleToggleVF(idx, parsed.value); // true/false
+      } else {
+        handleShortChange(idx, parsed.value); // string
+      }
+    } catch (e) {
+      console.error("Dictado/STT error", e);
+      const msg = (e && e.message) || "";
+      const name = e && (e.name || "");
+      const perm = name === "NotAllowedError" || /permission/i.test(msg);
+      const support = /MediaRecorder|getUserMedia|not supported/i.test(msg);
+      Swal.fire(
+        "No se pudo grabar",
+        perm
+          ? "Permite el uso del micrófono en tu navegador."
+          : support
+            ? "Prueba en Chrome/Edge, o actualiza tu navegador."
+            : "Ocurrió un error al transcribir.",
+        "warning"
+      );
     }
-
-    // 5) Parsear y marcar
-    const q = questions[idx];
-    const parsed = parseSpokenAnswer(said, q);
-    console.debug("[dictateForQuestion] parsed:", parsed, "type=", q?.type);
-
-    if (!parsed.ok) {
-      Swal.fire("No entendido", `No pude interpretar: "${said}"`, "info");
-      return;
-    }
-
-    if (q.type === "mcq") {
-      const letter = parsed.value; // "A"..."D"
-      const optIdx = letter.charCodeAt(0) - "A".charCodeAt(0);
-      handleSelectMCQ(idx, optIdx);
-    } else if (q.type === "vf") {
-      handleToggleVF(idx, parsed.value); // true/false
-    } else {
-      handleShortChange(idx, parsed.value); // string
-    }
-  } catch (e) {
-    console.error("Dictado/STT error", e);
-    const msg = (e && e.message) || "";
-    const name = e && (e.name || "");
-    const perm = name === "NotAllowedError" || /permission/i.test(msg);
-    const support = /MediaRecorder|getUserMedia|not supported/i.test(msg);
-    Swal.fire(
-      "No se pudo grabar",
-      perm
-        ? "Permite el uso del micrófono en tu navegador."
-        : support
-        ? "Prueba en Chrome/Edge, o actualiza tu navegador."
-        : "Ocurrió un error al transcribir.",
-      "warning"
-    );
-  }
-};
+  };
 
 
 
 
 
 
-// DEBUG: probar desde consola: window.dictateForQuestion(0)
- useEffect(() => {
-   window.dictateForQuestion = dictateForQuestion;
- }, []);
+  // DEBUG: probar desde consola: window.dictateForQuestion(0)
+  useEffect(() => {
+    window.dictateForQuestion = dictateForQuestion;
+  }, []);
 
   // Exponer helper para debug: explicar pregunta desde consola
   useEffect(() => {
@@ -1273,20 +1273,20 @@ const dictateForQuestion = async (idx) => {
 
       const payload = quizId
         ? // Actualizar quiz existente - solo enviar campos necesarios
-          {
-            current_question: currentQuestionIndex,
-            user_answers: currentAnswers,
-            is_completed: submitted,
-          }
+        {
+          current_question: currentQuestionIndex,
+          user_answers: currentAnswers,
+          is_completed: submitted,
+        }
         : // Crear nuevo quiz guardado - enviar todos los datos
-          {
-            title,
-            session_id: sessionId,
-            questions,
-            user_answers: currentAnswers,
-            current_question: currentQuestionIndex,
-            is_completed: false,
-          };
+        {
+          title,
+          session_id: sessionId,
+          questions,
+          user_answers: currentAnswers,
+          current_question: currentQuestionIndex,
+          is_completed: false,
+        };
 
       const endpoint = quizId
         ? `${API_BASE}/saved-quizzes/${quizId}/`
@@ -1716,420 +1716,427 @@ const dictateForQuestion = async (idx) => {
     );
   }
 
-return (
-  <main className="shell qp-root">
-    <header className="hero qp-header">
-      <div className="qp-header-content">
-        <div className="qp-title-section">
-          <h1>{isLoadedQuiz && quizTitle ? quizTitle : "Tu Quiz"}</h1>
-          <p>Responde las preguntas. Cuando termines, presiona "Calificar".</p>
-          {warning && <p className="qp-warning">⚠️ {warning}</p>}
-          {isLoadedQuiz && (
-            <p className="qp-saved-info">💾 Quiz guardado - Se guarda automáticamente tu progreso</p>
-          )}
-        </div>
+  return (
+    <main className="shell qp-root">
+      <header className="hero qp-header">
+        <div className="qp-header-content">
+          <div className="qp-title-section">
+            <h1>{isLoadedQuiz && quizTitle ? quizTitle : "Tu Quiz"}</h1>
+            <p>Responde las preguntas. Cuando termines, presiona "Calificar".</p>
+            {warning && <p className="qp-warning">⚠️ {warning}</p>}
+            {isLoadedQuiz && (
+              <p className="qp-saved-info">💾 Quiz guardado - Se guarda automáticamente tu progreso</p>
+            )}
+          </div>
 
-        {/* Botones de acción */}
-        <div className="qp-action-buttons">
-          <button
-            className="btn btn-primary"
-            onClick={() => navigate("/")}
-            title="Volver al inicio"
-          >
-            🏠 Inicio
-          </button>
-
-          {!submitted && (
+          {/* Botones de acción */}
+          <div className="qp-action-buttons">
             <button
-              className="btn btn-save"
-              onClick={() => saveQuizProgress()}
-              disabled={saving}
-              title="Guardar progreso del quiz"
+              className="btn btn-primary"
+              onClick={() => navigate("/")}
+              title="Volver al inicio"
             >
-              <Save size={16} />
-              {saving ? "Guardando..." : isLoadedQuiz ? "Guardar" : "Guardar Quiz"}
+              🏠 Inicio
             </button>
-          )}
 
+            {!submitted && (
+              <button
+                className="btn btn-save"
+                onClick={() => saveQuizProgress()}
+                disabled={saving}
+                title="Guardar progreso del quiz"
+              >
+                <Save size={16} />
+                {saving ? "Guardando..." : isLoadedQuiz ? "Guardar" : "Guardar Quiz"}
+              </button>
+            )}
+
+            <button
+              className="btn btn-secondary"
+              onClick={() => navigate("/saved-quizzes")}
+              title="Ver cuestionarios guardados"
+            >
+              <BookOpen size={16} />
+              Mis Quizzes
+            </button>
+          </div>
+        </div>
+
+        {/* Botones de exportación */}
+        <div className="qp-export-buttons">
           <button
-            className="btn btn-secondary"
-            onClick={() => navigate("/saved-quizzes")}
-            title="Ver cuestionarios guardados"
+            className="btn btn-export btn-pdf"
+            onClick={() => exportToPDF(questions, answers, submitted)}
+            title="Exportar quiz a PDF"
           >
-            <BookOpen size={16} />
-            Mis Quizzes
+            📄 Exportar PDF
+          </button>
+          <button
+            className="btn btn-export btn-txt"
+            onClick={() => exportToTXT(questions, answers, submitted)}
+            title="Exportar quiz a TXT"
+          >
+            📝 Exportar TXT
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Botones de exportación */}
-      <div className="qp-export-buttons">
-        <button
-          className="btn btn-export btn-pdf"
-          onClick={() => exportToPDF(questions, answers, submitted)}
-          title="Exportar quiz a PDF"
-        >
-          📄 Exportar PDF
-        </button>
-        <button
-          className="btn btn-export btn-txt"
-          onClick={() => exportToTXT(questions, answers, submitted)}
-          title="Exportar quiz a TXT"
-        >
-          📝 Exportar TXT
-        </button>
-      </div>
-    </header>
+      <section className="card">
+        <div className="qp-body">
+          <AnimatePresence>
+            {questions.map((q, idx) => {
+              const draft = regenDrafts[idx];
+              const selectedLetter =
+                (answers[idx] ?? "")
+                  .toString()
+                  .toUpperCase()
+                  .charAt(0);
 
-    <section className="card">
-      <div className="qp-body">
-        <AnimatePresence>
-          {questions.map((q, idx) => {
-            const draft = regenDrafts[idx];
-            const selectedLetter =
-              (answers[idx] ?? "")
-                .toString()
-                .toUpperCase()
-                .charAt(0);
-
-            return (
-              <motion.div
-                key={idx}
-                className="qp-question"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-              >
-                <div className="qp-title">
-                  {idx + 1}. {q.question}
-                </div>
-
-                {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
-                <div className="qp-voice-row">
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => toggleVoice(idx)}
-                    title="Controles de voz"
-                  >
-                    🎤 Voz {voiceOpen[idx] ? "▴" : "▾"}
-                  </button>
-
-                  {voiceOpen[idx] && (
-                    <div className="qp-voice-panel">
-                      <button className="btn btn-indigo" onClick={() => readQuestion(idx)}>
-                        🔊 Leer
-                      </button>
-                      <button
-                        className="btn btn-green-outline"
-                        type="button"
-                        onClick={() => {
-                          console.log("[QuizPlay] click en Dictar idx=", idx);
-                          dictateForQuestion(idx);
-                        }}
-                      >
-                        🎙️ Dictar esta
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* MCQ */}
-                {q.type === "mcq" && Array.isArray(q.options) && (
-                  <div className="qp-options">
-                    {q.options.map((opt, i) => {
-                      const letter = String.fromCharCode("A".charCodeAt(0) + i);
-                      const selected = selectedLetter === letter;
-                      return (
-                        <label
-                          key={i}
-                          className={`qp-option ${selected ? "is-selected" : ""}`}
-                          onClick={() => handleSelectMCQ(idx, i)}
-                        >
-                          <span className="qp-badge">{letter}</span>
-                          <span className="qp-text">
-                            {opt.replace(/^[A-D]\)\s*/i, "")}
-                          </span>
-                          <input
-                            type="radio"
-                            name={`q${idx}`}
-                            className="qp-radio"
-                            checked={selected}
-                            readOnly
-                          />
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* V/F */}
-                {q.type === "vf" && (
-                  <div className="qp-options" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                    <label
-                      className={`qp-option ${answers[idx] === true ? "is-selected" : ""}`}
-                      onClick={() => handleToggleVF(idx, true)}
-                    >
-                      <span className="qp-text">Verdadero</span>
-                      <input
-                        type="radio"
-                        name={`q${idx}-vf`}
-                        className="qp-radio"
-                        checked={answers[idx] === true}
-                        readOnly
-                      />
-                    </label>
-                    <label
-                      className={`qp-option ${answers[idx] === false ? "is-selected" : ""}`}
-                      onClick={() => handleToggleVF(idx, false)}
-                    >
-                      <span className="qp-text">Falso</span>
-                      <input
-                        type="radio"
-                        name={`q${idx}-vf`}
-                        className="qp-radio"
-                        checked={answers[idx] === false}
-                        readOnly
-                      />
-                    </label>
-                  </div>
-                )}
-
-                {/* Respuesta corta */}
-                {q.type === "short" && (
-                  <textarea
-                    rows={3}
-                    className="qp-short"
-                    placeholder="Escribe tu respuesta..."
-                    value={answers[idx] || ""}
-                    onChange={(e) => handleShortChange(idx, e.target.value)}
-                  />
-                )}
-
-                {/* Acciones por pregunta */}
-                <div className="qp-actions">
-                  <button
-                    className="btn btn-yellow"
-                    onClick={() => handleDuplicateQuestion(idx)}
-                    title="Duplicar esta pregunta"
-                  >
-                    📄 Duplicar
-                  </button>
-
-                  <button
-                    className="btn btn-red"
-                    onClick={() => handleDeleteQuestion(idx)}
-                    title="Eliminar esta pregunta"
-                  >
-                    🗑️ Eliminar
-                  </button>
-
-                  {!draft ? (
-                    <button
-                      className="btn btn-indigo"
-                      onClick={() => handleStartRegenerate(idx)}
-                      title="Regenerar esta pregunta"
-                    >
-                      🔄 Regenerar
-                    </button>
-                  ) : (
-                    <>
-                      <span className="qp-regen-note">Nueva variante lista</span>
-                      <button
-                        className="btn btn-black"
-                        onClick={() => handleRegenerateAgain(idx)}
-                      >
-                        Regenerar de nuevo
-                      </button>
-                      <button
-                        className="btn btn-green"
-                        onClick={() => handleConfirmReplace(idx)}
-                      >
-                        Reemplazar
-                      </button>
-                      <button
-                        className="btn btn-red"
-                        onClick={() => handleCancelRegenerate(idx)}
-                      >
-                        Cancelar
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {/* Panel de borrador (vista previa de la variante) */}
-                {draft && (
-                  <div className="qp-regen">
-                    <div className="qp-regen__title">Vista previa de variante</div>
-                    <div className="qp-regen__q">{draft.question}</div>
-                    {Array.isArray(draft.options) && (
-                      <ul className="qp-regen__list">
-                        {draft.options.map((o, i) => (
-                          <li key={i}>{o}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {draft.explanation && (
-                      <div className="qp-regen__expl">💡 {draft.explanation}</div>
-                    )}
-                  </div>
-                )}
-
-                {/* Solución al enviar */}
-                {submitted && (
-                  <div className="qp-solution">
-                    <div className="qp-expected">
-                      <b>Respuesta esperada:</b>{" "}
-                      {q.type === "vf" ? q.answer : q.type === "mcq" ? q.answer : q.answer}
-                    </div>
-                    {q.explanation && <div className="qp-expl">💡 {q.explanation}</div>}
-                  </div>
-                )}
-
-                {/* Historial */}
-                {Array.isArray(history[idx]) && history[idx].length > 1 && (
-                  <details className="qp-history">
-                    <summary>Ver historial ({history[idx].length} versiones)</summary>
-                    <ol>
-                      {history[idx].map((v, vi) => (
-                        <li key={vi}>
-                          <b>v{vi}:</b> {v.question}
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
-                )}
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
-      </div>
-
-      <div className="qp-actions">
-        {!submitted ? (
-          <>
-            <button className="btn btn-green" onClick={submitQuiz}>
-              Calificar
-            </button>
-            <button className="btn btn-indigo" onClick={() => navigate("/")}>
-              Volver al inicio
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="btn btn-indigo" onClick={resetQuiz}>
-              Reintentar
-            </button>
-            <button className="btn btn-indigo" onClick={() => navigate("/")}>
-              Volver al inicio
-            </button>
-          </>
-        )}
-      </div>
-
-      {submitted && (
-        <motion.div
-          className="qp-detailed-results"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          {/* Resumen general */}
-          <div className="results-header">
-            <h3>🎉 ¡Quiz completado!</h3>
-            <div className="overall-score">
-              <span className="score-big">{detailedScoring.percentage}%</span>
-              <span className="score-fraction">
-                {detailedScoring.correct} de {detailedScoring.total} correctas
-              </span>
-            </div>
-          </div>
-
-          {/* Análisis por tipo */}
-          <div className="results-by-type">
-            <h4>📊 Análisis por tipo de pregunta</h4>
-            <div className="type-grid">
-              {Object.entries(detailedScoring.byType).map(([type, data]) => {
-                if (data.total === 0) return null;
-                return (
-                  <div key={type} className="type-card">
-                    <div className="type-name">
-                      {type === "mcq"
-                        ? "🔄 Opción múltiple"
-                        : type === "vf"
-                        ? "✅ Verdadero/Falso"
-                        : "📝 Respuesta corta"}
-                    </div>
-                    <div className="type-score">{data.percentage}%</div>
-                    <div className="type-details">
-                      {data.correct}/{data.total}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Reintento */}
-          <div className="results-actions">
-            <button className="btn btn-retry" onClick={retryQuiz}>
-              🔄 Reintentar Quiz
-            </button>
-
-            <button className="btn btn-new" onClick={() => navigate("/saved-quizzes")}>
-              📚 Ver mis quizzes
-            </button>
-          </div>
-
-          {/* Detalle por pregunta */}
-          <details className="question-breakdown">
-            <summary>🔍 Ver detalle por pregunta</summary>
-            <div className="breakdown-list">
-              {detailedScoring.questionDetails.map((detail, idx) => (
-                <div
+              return (
+                <motion.div
                   key={idx}
-                  className={`breakdown-item ${
-                    detail.isCorrect ? "correct" : detail.hasAnswer ? "incorrect" : "unanswered"
-                  }`}
+                  className="qp-question"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
                 >
-                  <span className="q-number">#{idx + 1}</span>
-                  <span className="q-type">
-                    {detail.type === "mcq" ? "🔄" : detail.type === "vf" ? "✅" : "📝"}
-                  </span>
-                  <span className="q-status">
-                    {!detail.hasAnswer
-                      ? "⚪ Sin respuesta"
-                      : detail.isCorrect
-                      ? "✅ Correcto"
-                      : "❌ Incorrecto"}
-                  </span>
-                  {detail.hasAnswer && !detail.isCorrect && (
-                    <div className="q-correction">
-                      <small>Tu respuesta: {String(detail.userAnswer)}</small>
-                      <br />
-                      <small>Correcta: {String(detail.correctAnswer)}</small>
+                  <div className="qp-title">
+                    {idx + 1}. {q.question}
+                  </div>
+
+                  {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
+                  <div className="qp-voice-row">
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => toggleVoice(idx)}
+                      title="Controles de voz"
+                    >
+                      🎤 Voz {voiceOpen[idx] ? "▴" : "▾"}
+                    </button>
+
+                    {voiceOpen[idx] && (
+                      <div className="qp-voice-panel">
+                        <button className="btn btn-indigo" onClick={() => readQuestion(idx)}>
+                          🔊 Leer
+                        </button>
+                        <button
+                          className="btn btn-green-outline"
+                          type="button"
+                          onClick={() => {
+                            console.log("[QuizPlay] click en Dictar idx=", idx);
+                            dictateForQuestion(idx);
+                          }}
+                        >
+                          🎙️ Dictar esta
+                        </button>
+                        {/* 🧠 Nuevo botón: Pista por voz */}
+                        <button
+                          className="btn btn-purple-outline"
+                          type="button"
+                          onClick={() => ListenForHint(idx)}
+                        >
+                          💡 Pista por voz
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* MCQ */}
+                  {q.type === "mcq" && Array.isArray(q.options) && (
+                    <div className="qp-options">
+                      {q.options.map((opt, i) => {
+                        const letter = String.fromCharCode("A".charCodeAt(0) + i);
+                        const selected = selectedLetter === letter;
+                        return (
+                          <label
+                            key={i}
+                            className={`qp-option ${selected ? "is-selected" : ""}`}
+                            onClick={() => handleSelectMCQ(idx, i)}
+                          >
+                            <span className="qp-badge">{letter}</span>
+                            <span className="qp-text">
+                              {opt.replace(/^[A-D]\)\s*/i, "")}
+                            </span>
+                            <input
+                              type="radio"
+                              name={`q${idx}`}
+                              className="qp-radio"
+                              checked={selected}
+                              readOnly
+                            />
+                          </label>
+                        );
+                      })}
                     </div>
                   )}
-                </div>
-              ))}
-            </div>
-          </details>
-        </motion.div>
-      )}
-    </section>
 
-    {/* ========== ADDED: QGAI-104 Proactive Suggestion Component ========== */}
-    {showSuggestion && currentSuggestion && (
-      <ProactiveSuggestion
-        suggestion={currentSuggestion}
-        onAccept={handleAcceptSuggestion}
-        onDismiss={handleDismissSuggestion}
-        sessionId={sessionId}
-        ttsEnabled={false} // TTS deshabilitado por ahora para no bloquear
-        isTTSSpeaking={false}
-      />
-    )}
-    {/* ==================================================================== */}
-  </main>
-);
+                  {/* V/F */}
+                  {q.type === "vf" && (
+                    <div className="qp-options" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                      <label
+                        className={`qp-option ${answers[idx] === true ? "is-selected" : ""}`}
+                        onClick={() => handleToggleVF(idx, true)}
+                      >
+                        <span className="qp-text">Verdadero</span>
+                        <input
+                          type="radio"
+                          name={`q${idx}-vf`}
+                          className="qp-radio"
+                          checked={answers[idx] === true}
+                          readOnly
+                        />
+                      </label>
+                      <label
+                        className={`qp-option ${answers[idx] === false ? "is-selected" : ""}`}
+                        onClick={() => handleToggleVF(idx, false)}
+                      >
+                        <span className="qp-text">Falso</span>
+                        <input
+                          type="radio"
+                          name={`q${idx}-vf`}
+                          className="qp-radio"
+                          checked={answers[idx] === false}
+                          readOnly
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Respuesta corta */}
+                  {q.type === "short" && (
+                    <textarea
+                      rows={3}
+                      className="qp-short"
+                      placeholder="Escribe tu respuesta..."
+                      value={answers[idx] || ""}
+                      onChange={(e) => handleShortChange(idx, e.target.value)}
+                    />
+                  )}
+
+                  {/* Acciones por pregunta */}
+                  <div className="qp-actions">
+                    <button
+                      className="btn btn-yellow"
+                      onClick={() => handleDuplicateQuestion(idx)}
+                      title="Duplicar esta pregunta"
+                    >
+                      📄 Duplicar
+                    </button>
+
+                    <button
+                      className="btn btn-red"
+                      onClick={() => handleDeleteQuestion(idx)}
+                      title="Eliminar esta pregunta"
+                    >
+                      🗑️ Eliminar
+                    </button>
+
+                    {!draft ? (
+                      <button
+                        className="btn btn-indigo"
+                        onClick={() => handleStartRegenerate(idx)}
+                        title="Regenerar esta pregunta"
+                      >
+                        🔄 Regenerar
+                      </button>
+                    ) : (
+                      <>
+                        <span className="qp-regen-note">Nueva variante lista</span>
+                        <button
+                          className="btn btn-black"
+                          onClick={() => handleRegenerateAgain(idx)}
+                        >
+                          Regenerar de nuevo
+                        </button>
+                        <button
+                          className="btn btn-green"
+                          onClick={() => handleConfirmReplace(idx)}
+                        >
+                          Reemplazar
+                        </button>
+                        <button
+                          className="btn btn-red"
+                          onClick={() => handleCancelRegenerate(idx)}
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Panel de borrador (vista previa de la variante) */}
+                  {draft && (
+                    <div className="qp-regen">
+                      <div className="qp-regen__title">Vista previa de variante</div>
+                      <div className="qp-regen__q">{draft.question}</div>
+                      {Array.isArray(draft.options) && (
+                        <ul className="qp-regen__list">
+                          {draft.options.map((o, i) => (
+                            <li key={i}>{o}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {draft.explanation && (
+                        <div className="qp-regen__expl">💡 {draft.explanation}</div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Solución al enviar */}
+                  {submitted && (
+                    <div className="qp-solution">
+                      <div className="qp-expected">
+                        <b>Respuesta esperada:</b>{" "}
+                        {q.type === "vf" ? q.answer : q.type === "mcq" ? q.answer : q.answer}
+                      </div>
+                      {q.explanation && <div className="qp-expl">💡 {q.explanation}</div>}
+                    </div>
+                  )}
+
+                  {/* Historial */}
+                  {Array.isArray(history[idx]) && history[idx].length > 1 && (
+                    <details className="qp-history">
+                      <summary>Ver historial ({history[idx].length} versiones)</summary>
+                      <ol>
+                        {history[idx].map((v, vi) => (
+                          <li key={vi}>
+                            <b>v{vi}:</b> {v.question}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
+
+        <div className="qp-actions">
+          {!submitted ? (
+            <>
+              <button className="btn btn-green" onClick={submitQuiz}>
+                Calificar
+              </button>
+              <button className="btn btn-indigo" onClick={() => navigate("/")}>
+                Volver al inicio
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-indigo" onClick={resetQuiz}>
+                Reintentar
+              </button>
+              <button className="btn btn-indigo" onClick={() => navigate("/")}>
+                Volver al inicio
+              </button>
+            </>
+          )}
+        </div>
+
+        {submitted && (
+          <motion.div
+            className="qp-detailed-results"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            {/* Resumen general */}
+            <div className="results-header">
+              <h3>🎉 ¡Quiz completado!</h3>
+              <div className="overall-score">
+                <span className="score-big">{detailedScoring.percentage}%</span>
+                <span className="score-fraction">
+                  {detailedScoring.correct} de {detailedScoring.total} correctas
+                </span>
+              </div>
+            </div>
+
+            {/* Análisis por tipo */}
+            <div className="results-by-type">
+              <h4>📊 Análisis por tipo de pregunta</h4>
+              <div className="type-grid">
+                {Object.entries(detailedScoring.byType).map(([type, data]) => {
+                  if (data.total === 0) return null;
+                  return (
+                    <div key={type} className="type-card">
+                      <div className="type-name">
+                        {type === "mcq"
+                          ? "🔄 Opción múltiple"
+                          : type === "vf"
+                            ? "✅ Verdadero/Falso"
+                            : "📝 Respuesta corta"}
+                      </div>
+                      <div className="type-score">{data.percentage}%</div>
+                      <div className="type-details">
+                        {data.correct}/{data.total}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Reintento */}
+            <div className="results-actions">
+              <button className="btn btn-retry" onClick={retryQuiz}>
+                🔄 Reintentar Quiz
+              </button>
+
+              <button className="btn btn-new" onClick={() => navigate("/saved-quizzes")}>
+                📚 Ver mis quizzes
+              </button>
+            </div>
+
+            {/* Detalle por pregunta */}
+            <details className="question-breakdown">
+              <summary>🔍 Ver detalle por pregunta</summary>
+              <div className="breakdown-list">
+                {detailedScoring.questionDetails.map((detail, idx) => (
+                  <div
+                    key={idx}
+                    className={`breakdown-item ${detail.isCorrect ? "correct" : detail.hasAnswer ? "incorrect" : "unanswered"
+                      }`}
+                  >
+                    <span className="q-number">#{idx + 1}</span>
+                    <span className="q-type">
+                      {detail.type === "mcq" ? "🔄" : detail.type === "vf" ? "✅" : "📝"}
+                    </span>
+                    <span className="q-status">
+                      {!detail.hasAnswer
+                        ? "⚪ Sin respuesta"
+                        : detail.isCorrect
+                          ? "✅ Correcto"
+                          : "❌ Incorrecto"}
+                    </span>
+                    {detail.hasAnswer && !detail.isCorrect && (
+                      <div className="q-correction">
+                        <small>Tu respuesta: {String(detail.userAnswer)}</small>
+                        <br />
+                        <small>Correcta: {String(detail.correctAnswer)}</small>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </motion.div>
+        )}
+      </section>
+
+      {/* ========== ADDED: QGAI-104 Proactive Suggestion Component ========== */}
+      {showSuggestion && currentSuggestion && (
+        <ProactiveSuggestion
+          suggestion={currentSuggestion}
+          onAccept={handleAcceptSuggestion}
+          onDismiss={handleDismissSuggestion}
+          sessionId={sessionId}
+          ttsEnabled={false} // TTS deshabilitado por ahora para no bloquear
+          isTTSSpeaking={false}
+        />
+      )}
+      {/* ==================================================================== */}
+    </main>
+  );
 
 }

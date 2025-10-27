@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 from . import views
+from . import view_hint
 from .views_metrics import metrics_summary, metrics_export
 from .voice_metrics_views import log_voice_event, voice_metrics_summary, voice_metrics_export, voice_metrics_events
 from .views_tts import voice_token, tts_synthesize
@@ -62,5 +63,6 @@ urlpatterns = [
     path("intent-router/batch_parse/", batch_parse_intents, name="batch_parse_intents"),
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
+    path("hint/", view_hint.hint_view, name="hint"),
     path("ffmpeg-debug/", ffmpeg_debug, name="ffmpeg_debug"),
 ]
