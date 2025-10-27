@@ -1,0 +1,481 @@
+/* components/ProactiveSuggestion.css */
+
+/**
+ * Estilos para el componente de sugerencias proactivas.
+ * Toast notification en esquina inferior derecha con animaciones suaves.
+ */
+
+/* Contenedor principal */
+.proactive-suggestion {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  max-width: 420px;
+  min-width: 320px;
+  background: linear-gradient(135deg, #1a1f3a 0%, #0f1222 100%);
+  border: 1px solid rgba(124, 77, 255, 0.3);
+  border-radius: 16px;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(124, 77, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  padding: 20px;
+  z-index: 9999;
+  backdrop-filter: blur(12px);
+
+  /* Animación de entrada */
+  animation: slideUpFadeIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+
+  /* Sutil glow animado */
+  overflow: hidden;
+
+  /* Ensure it doesn't affect document flow */
+  pointer-events: auto;
+}
+
+.proactive-suggestion::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(
+    circle,
+    rgba(124, 77, 255, 0.1) 0%,
+    transparent 70%
+  );
+  animation: gentleGlow 4s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* Animación de salida */
+.proactive-suggestion.animating-out {
+  animation: slideDownFadeOut 0.3s cubic-bezier(0.4, 0.0, 1, 1) forwards;
+}
+
+/* ============================================
+   CLASES DE PRIORIDAD
+   ============================================ */
+
+/* Alta prioridad - borde izquierdo rojo/naranja */
+.proactive-suggestion.priority-high {
+  border-left: 4px solid #ff5252;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(255, 82, 82, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.proactive-suggestion.priority-high .suggestion-icon {
+  animation: iconPulseHigh 1.5s ease-in-out infinite;
+}
+
+/* Media prioridad - borde izquierdo azul */
+.proactive-suggestion.priority-medium {
+  border-left: 4px solid #448aff;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(68, 138, 255, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Baja prioridad - borde izquierdo gris */
+.proactive-suggestion.priority-low {
+  border-left: 4px solid #90a4ae;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.4),
+    0 4px 12px rgba(144, 164, 174, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Contenido principal */
+.suggestion-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Ícono de prioridad */
+.suggestion-icon {
+  font-size: 32px;
+  flex-shrink: 0;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  animation: iconPulse 2s ease-in-out infinite;
+}
+
+/* Texto de sugerencia */
+.suggestion-text {
+  flex: 1;
+  color: #e8eaf6;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.suggestion-text p {
+  margin: 0;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+/* Botón de cerrar */
+.suggestion-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: #b0b8d4;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  transition: all 0.2s ease;
+  z-index: 2;
+}
+
+.suggestion-close:hover {
+  background: rgba(255, 64, 129, 0.2);
+  color: #ff4081;
+  transform: scale(1.1);
+}
+
+.suggestion-close:active {
+  transform: scale(0.95);
+}
+
+.suggestion-close:focus {
+  outline: 2px solid rgba(124, 77, 255, 0.6);
+  outline-offset: 2px;
+}
+
+/* Botones de acción */
+.suggestion-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.suggestion-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Botón aceptar */
+.suggestion-btn-accept {
+  background: linear-gradient(135deg, #7c4dff 0%, #651fff 100%);
+  color: white;
+  box-shadow:
+    0 4px 12px rgba(124, 77, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.suggestion-btn-accept:hover {
+  background: linear-gradient(135deg, #8c5dff 0%, #7530ff 100%);
+  box-shadow:
+    0 6px 16px rgba(124, 77, 255, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.suggestion-btn-accept:active {
+  transform: translateY(0);
+  box-shadow:
+    0 2px 8px rgba(124, 77, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+/* Botón descartar */
+.suggestion-btn-dismiss {
+  background: rgba(255, 255, 255, 0.08);
+  color: #b0b8d4;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.suggestion-btn-dismiss:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e8eaf6;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.suggestion-btn-dismiss:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Focus visible para accesibilidad */
+.suggestion-btn:focus-visible {
+  outline: 2px solid rgba(124, 77, 255, 0.8);
+  outline-offset: 2px;
+}
+
+/* Debug info (solo desarrollo) */
+.suggestion-debug {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: #7986cb;
+  font-size: 11px;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+  opacity: 0.7;
+}
+
+/* ============================================
+   ANIMACIONES
+   ============================================ */
+
+/* Entrada: slide up + fade in */
+@keyframes slideUpFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Salida: slide down + fade out */
+@keyframes slideDownFadeOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+}
+
+/* Glow suave en el fondo */
+@keyframes gentleGlow {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0.3;
+  }
+  100% {
+    transform: translate(10%, 10%);
+    opacity: 0.5;
+  }
+}
+
+/* Pulse del ícono */
+@keyframes iconPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+/* Pulse intenso para alta prioridad */
+@keyframes iconPulseHigh {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  }
+  50% {
+    transform: scale(1.15);
+    filter: drop-shadow(0 4px 8px rgba(255, 82, 82, 0.5));
+  }
+}
+
+/* Slide in from bottom (alias para slideUpFadeIn) */
+@keyframes slideInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Slide out to bottom (alias para slideDownFadeOut) */
+@keyframes slideOutDown {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+/* Tablets y móviles grandes */
+@media (max-width: 768px) {
+  .proactive-suggestion {
+    bottom: 16px;
+    right: 16px;
+    left: 16px;
+    max-width: none;
+    min-width: 0;
+  }
+}
+
+/* Móviles pequeños */
+@media (max-width: 480px) {
+  .proactive-suggestion {
+    bottom: 12px;
+    right: 12px;
+    left: 12px;
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .suggestion-icon {
+    font-size: 28px;
+  }
+
+  .suggestion-text {
+    font-size: 14px;
+  }
+
+  .suggestion-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .suggestion-btn {
+    padding: 12px 16px;
+  }
+}
+
+/* ============================================
+   ACCESIBILIDAD
+   ============================================ */
+
+/* Modo de alto contraste */
+@media (prefers-contrast: high) {
+  .proactive-suggestion {
+    border: 2px solid #7c4dff;
+    box-shadow: none;
+  }
+
+  .suggestion-btn-accept {
+    background: #7c4dff;
+  }
+
+  .suggestion-btn-dismiss {
+    border: 2px solid #b0b8d4;
+  }
+}
+
+/* Reducción de movimiento */
+@media (prefers-reduced-motion: reduce) {
+  .proactive-suggestion {
+    animation: fadeIn 0.3s ease;
+  }
+
+  .proactive-suggestion.animating-out {
+    animation: fadeOut 0.3s ease forwards;
+  }
+
+  .suggestion-icon,
+  .proactive-suggestion::before {
+    animation: none;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+}
+
+/* Modo oscuro (ya está en dark por defecto, pero por consistencia) */
+@media (prefers-color-scheme: light) {
+  .proactive-suggestion {
+    background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+    border-color: rgba(124, 77, 255, 0.4);
+    box-shadow:
+      0 10px 40px rgba(0, 0, 0, 0.15),
+      0 4px 12px rgba(124, 77, 255, 0.15);
+  }
+
+  .suggestion-text {
+    color: #1a1f3a;
+  }
+
+  .suggestion-close {
+    background: rgba(0, 0, 0, 0.08);
+    color: #5a5a5a;
+  }
+
+  .suggestion-close:hover {
+    background: rgba(255, 64, 129, 0.15);
+  }
+
+  .suggestion-btn-dismiss {
+    background: rgba(0, 0, 0, 0.06);
+    color: #424242;
+    border-color: rgba(0, 0, 0, 0.12);
+  }
+
+  .suggestion-btn-dismiss:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: #1a1a1a;
+  }
+
+  .suggestion-debug {
+    color: #5c6bc0;
+    border-top-color: rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* ============================================
+   ESTADOS DE CARGA
+   ============================================ */
+
+/* Shimmer effect mientras se procesa */
+.proactive-suggestion.loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  to {
+    left: 100%;
+  }
+}
