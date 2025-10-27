@@ -15,8 +15,11 @@ from .views_intent_router import (
     parse_intent,
     batch_parse_intents,
 )
+from .suggestion_views import (
+    get_next_suggestion,
+    suggestion_feedback,
+)
 from .views_ffmpeg_debug import ffmpeg_debug
-path("ffmpeg-debug/", ffmpeg_debug),
 
 router = DefaultRouter()
 
@@ -37,6 +40,10 @@ urlpatterns = [
     path("voice-metrics/export/", voice_metrics_export, name="voice_metrics_export"),
     path("voice-metrics/events/", voice_metrics_events, name="voice_metrics_events"),
 
+    # Proactive Suggestions (QGAI-104)
+    path("suggestions/next/", get_next_suggestion, name="get_next_suggestion"),
+    path("suggestions/feedback/", suggestion_feedback, name="suggestion_feedback"),
+
     # Cuestionarios guardados (nueva funcionalidad)
     path("saved-quizzes/", saved_quizzes, name="saved_quizzes"),
     path("saved-quizzes/<uuid:quiz_id>/", saved_quiz_detail, name="saved_quiz_detail"),
@@ -55,4 +62,5 @@ urlpatterns = [
     path("intent-router/batch_parse/", batch_parse_intents, name="batch_parse_intents"),
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
+    path("ffmpeg-debug/", ffmpeg_debug, name="ffmpeg_debug"),
 ]

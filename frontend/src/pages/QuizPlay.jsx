@@ -13,6 +13,12 @@ import { recordAudioWithFallback } from "../utils/audioRecorder";
 // import { startAzureSTT } from "../voice/azureClientSST";
 // import { parseAnswerCommand } from "../utils/voiceParsing";
 
+// ========== ADDED: QGAI-104 Proactive Suggestions Integration ==========
+import useContextTracker from "../hooks/useContextTracker";
+import { requestSuggestion, shouldShowSuggestion, SUGGESTION_CONFIG } from "../services/suggestionService";
+import ProactiveSuggestion from "../components/ProactiveSuggestion";
+// ========================================================================
+
 
 
 
@@ -448,6 +454,12 @@ export default function QuizPlay(props) {
   // Borradores de regeneración pendientes de confirmar: { [idx]: question }
   const [regenDrafts, setRegenDrafts] = useState({});
 
+  // ========== ADDED: QGAI-104 Proactive Suggestions State ==========
+  const [currentSuggestion, setCurrentSuggestion] = useState(null);
+  const [lastSuggestionTime, setLastSuggestionTime] = useState(0);
+  const [showSuggestion, setShowSuggestion] = useState(false);
+  // ================================================================
+
   // Escuchar intents globales del widget de voz
   useEffect(() => {
     // use getSlot util to extract numbers/indices from the result/text
@@ -513,10 +525,14 @@ export default function QuizPlay(props) {
       // Navegación
       if (/navigate_next|siguiente|next|avanza|sigue/.test(intent) || /siguiente|adelante|avanza/.test(text)) {
         setCurrentQuestionIndex((i) => Math.min(questions.length - 1, i + 1));
+        resetIdle(); // ADDED: QGAI-104
+        recordAction('navigate', { direction: 'next' }); // ADDED: QGAI-104
         return;
       }
       if (/navigate_previous|anterior|back|volver/.test(intent) || /anterior|atrás|volver/.test(text)) {
         setCurrentQuestionIndex((i) => Math.max(0, i - 1));
+        resetIdle(); // ADDED: QGAI-104
+        recordAction('navigate', { direction: 'previous' }); // ADDED: QGAI-104
         return;
       }
 
@@ -939,7 +955,31 @@ export default function QuizPlay(props) {
   const handleSelectMCQ = (idx, optIdx) => {
     const letter = String.fromCharCode("A".charCodeAt(0) + optIdx);
     setAnswers((p) => ({ ...p, [idx]: letter }));
+
+    // ========== ADDED: QGAI-104 Track Interaction ==========
+    // UPDATED: Use recordAnswer for smarter error rate tracking
+    resetIdle(); // Usuario interactuó
+    recordAction('answer', { questionIndex: idx, answerType: 'mcq' });
+
+    // Verificar si la respuesta es correcta para tracking
+    const question = questions[idx];
+    if (question && question.answer) {
+      const isCorrect = letter === String(question.answer).trim().toUpperCase().charAt(0);
+      recordAnswer(isCorrect, { questionId: idx, userAnswer: letter, correctAnswer: question.answer });
+    }
+    // ========================================================
   };
+
+  // ========== ADDED: QGAI-104 Configure Context Tracker ==========
+  // UPDATED: Added recordAnswer, errorRate, totalAnswered for smarter error detection
+  // UPDATED: Idle threshold increased to 30s to be less intrusive
+  const { context, resetIdle, recordAnswer, recordAction, isIdle, errorRate, totalAnswered } = useContextTracker({
+    idleThreshold: 30000, // 30 segundos
+    quizTopic: location.state?.topic || "Quiz",
+    totalQuestions: questions.length,
+    currentQuestion: currentQuestionIndex,
+  });
+  // ================================================================
 
   // Leer una pregunta específica
 const readQuestion = async (idx) => {
@@ -1078,10 +1118,28 @@ const dictateForQuestion = async (idx) => {
 
   const handleToggleVF = (idx, val) => {
     setAnswers((p) => ({ ...p, [idx]: val }));
+
+    // ========== ADDED: QGAI-104 Track Interaction ==========
+    // UPDATED: Use recordAnswer for smarter error rate tracking
+    resetIdle();
+    recordAction('answer', { questionIndex: idx, answerType: 'vf' });
+
+    const question = questions[idx];
+    if (question && question.answer !== undefined) {
+      const isCorrect = val === question.answer;
+      recordAnswer(isCorrect, { questionId: idx, userAnswer: val, correctAnswer: question.answer });
+    }
+    // ========================================================
   };
 
   const handleShortChange = (idx, val) => {
     setAnswers((p) => ({ ...p, [idx]: val }));
+
+    // ========== ADDED: QGAI-104 Track Interaction ==========
+    resetIdle();
+    recordAction('answer', { questionIndex: idx, answerType: 'short' });
+    // Note: Para respuestas cortas, no podemos saber si es correcta hasta enviar el quiz
+    // ========================================================
   };
 
   // 🔽 NUEVAS FUNCIONES
@@ -1395,6 +1453,103 @@ const dictateForQuestion = async (idx) => {
       answeredQuestions.length > 0 ? Math.max(...answeredQuestions) : -1;
     setCurrentQuestionIndex(Math.min(maxAnswered + 1, questions.length - 1));
   }, [answers, questions.length]);
+
+  // ========== ADDED: QGAI-104 Poll for Suggestions ==========
+  useEffect(() => {
+    // Solo revisar sugerencias si hay preguntas y no se ha enviado el quiz
+    if (!questions.length || submitted) return;
+
+    const checkForSuggestions = async () => {
+      // Verificar si podemos mostrar una nueva sugerencia basándonos en throttling
+      if (!shouldShowSuggestion(lastSuggestionTime)) {
+        return;
+      }
+
+      // Verificar si el contexto amerita una sugerencia
+      // UPDATED: Use error rate (70% with 3+ answers) instead of consecutive errors
+      if (isIdle || (errorRate >= 0.7 && totalAnswered >= 3)) {
+        try {
+          const suggestion = await requestSuggestion(context, sessionId);
+
+          if (suggestion) {
+            console.log('[QuizPlay] Sugerencia recibida:', suggestion);
+            setCurrentSuggestion(suggestion);
+            setShowSuggestion(true);
+            setLastSuggestionTime(Date.now());
+          }
+        } catch (error) {
+          console.error('[QuizPlay] Error solicitando sugerencia:', error);
+        }
+      }
+    };
+
+    checkForSuggestions();
+  }, [isIdle, errorRate, totalAnswered, context, sessionId, lastSuggestionTime, questions.length, submitted]);
+  // ================================================================
+
+  // ========== ADDED: QGAI-104 Suggestion Handlers ==========
+  const handleAcceptSuggestion = (actionType, params) => {
+    console.log('[QuizPlay] Usuario aceptó sugerencia:', actionType, params);
+
+    // Ejecutar la acción sugerida según el tipo
+    switch (actionType) {
+      case 'read_question':
+        // Leer la pregunta especificada
+        const questionIndex = params?.question_index ?? currentQuestionIndex;
+        if (questionIndex >= 0 && questionIndex < questions.length) {
+          readQuestion(questionIndex);
+          setCurrentQuestionIndex(questionIndex);
+        }
+        break;
+
+      case 'generate_quiz':
+        // Navegar a home con datos prefill para generar nuevo quiz
+        navigate('/', {
+          state: {
+            prefill: {
+              topic: params?.topic || location.state?.topic || '',
+              difficulty: params?.difficulty || 'Fácil',
+            }
+          }
+        });
+        break;
+
+      case 'navigate':
+        // Navegación a resumen o revisión
+        if (params?.action === 'review_answers') {
+          // Scroll al resumen o mostrar detalle
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        break;
+
+      case 'show_summary':
+        // Mostrar resumen si existe alguna función para eso
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        break;
+
+      default:
+        console.warn('[QuizPlay] Tipo de acción no reconocido:', actionType);
+    }
+
+    // Resetear estado de sugerencia
+    setShowSuggestion(false);
+    setCurrentSuggestion(null);
+
+    // Registrar la acción en el contexto
+    recordAction('accept_suggestion', { actionType, params });
+  };
+
+  const handleDismissSuggestion = () => {
+    console.log('[QuizPlay] Usuario descartó sugerencia');
+
+    // Resetear estado de sugerencia
+    setShowSuggestion(false);
+    setCurrentSuggestion(null);
+
+    // Registrar la acción en el contexto
+    recordAction('dismiss_suggestion');
+  };
+  // ================================================================
 
   // -------- Sistema de puntaje avanzado ----------
   // Función para evaluar respuestas cortas de manera más inteligente
@@ -1961,6 +2116,19 @@ return (
         </motion.div>
       )}
     </section>
+
+    {/* ========== ADDED: QGAI-104 Proactive Suggestion Component ========== */}
+    {showSuggestion && currentSuggestion && (
+      <ProactiveSuggestion
+        suggestion={currentSuggestion}
+        onAccept={handleAcceptSuggestion}
+        onDismiss={handleDismissSuggestion}
+        sessionId={sessionId}
+        ttsEnabled={false} // TTS deshabilitado por ahora para no bloquear
+        isTTSSpeaking={false}
+      />
+    )}
+    {/* ==================================================================== */}
   </main>
 );
 
