@@ -8,6 +8,7 @@ import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
 import ModelProviderSelect from "../components/ModelProviderSelect";
 import { useVoiceCommands } from "../hooks/useVoiceCommands";
 import { getSlot, extractTypeCounts } from '../utils/voiceParsing';
+import QuizPreviewEditor from "./QuizPreviewEditor";
 
 const TAXONOMY = [
   "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
@@ -180,6 +181,10 @@ export default function QuizForm(props) {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const MAX_TOTAL = 20;
+
+  // Estado para controlar el modo de edición avanzado
+  const [showEditor, setShowEditor] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
 
   // Clave para localStorage
   const AUTOSAVE_KEY = "quizform_autosave";
@@ -371,31 +376,73 @@ export default function QuizForm(props) {
 
   async function handlePreview() {
     if (!validate()) return;
-    const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
 
-    const res = await fetch(
-      `${API_BASE}/preview/`,
-      withProviderHeaders(
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-        provider,
-        headerName
-      )
-    );
-    const json = await res.json();
+    // Primero crear una sesión temporal para obtener un sessionId
+    try {
+      setCreating(true);
+      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
 
-    const usedHeader = res.headers.get("x-llm-effective-provider");
-    const fbHeader = res.headers.get("x-llm-fallback");
+      // Crear sesión temporal
+      const sessionRes = await fetch(
+        `${API_BASE}/sessions/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          provider,
+          headerName
+        )
+      );
 
-    const used = usedHeader || json.source;           // respaldo al body
-    const fallback = (fbHeader ?? (json.fallback_used ? "1" : "0")) === "1";
+      if (!sessionRes.ok) {
+        const error = await sessionRes.json();
+        Swal.fire("Error", error.error || "No se pudo crear la sesión", "error");
+        return;
+      }
 
-    console.log("[LLM] requested:", provider, "used:", used, "fallback:", fallback);
-    if (res.ok) setPreview(json.preview);
-    else Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
+      const sessionData = await sessionRes.json();
+      const sessionId = sessionData.session_id;
+      setCurrentSessionId(sessionId);
+
+      // Ahora obtener el preview con el sessionId
+      const previewRes = await fetch(
+        `${API_BASE}/preview/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, session_id: sessionId }),
+          },
+          provider,
+          headerName
+        )
+      );
+
+      const json = await previewRes.json();
+
+      const usedHeader = previewRes.headers.get("x-llm-effective-provider");
+      const fbHeader = previewRes.headers.get("x-llm-fallback");
+
+      const used = usedHeader || json.source;
+      const fallback = (fbHeader ?? (json.fallback_used ? "1" : "0")) === "1";
+
+      console.log("[LLM] requested:", provider, "used:", used, "fallback:", fallback);
+
+      if (previewRes.ok) {
+        setPreview(json.preview);
+        // Activar el modo editor
+        setShowEditor(true);
+      } else {
+        Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
+      }
+    } catch (err) {
+      console.error("Error en preview:", err);
+      Swal.fire("Error", String(err), "error");
+    } finally {
+      setCreating(false);
+    }
   }
 
   // CREA SESIÓN (separado de métricas)
@@ -449,6 +496,72 @@ export default function QuizForm(props) {
       setCreating(false);
     }
   }
+
+  // CALLBACKS PARA EL EDITOR
+  const handleEditorConfirm = async (editedQuestions) => {
+    try {
+      setCreating(true);
+
+      // Crear el quiz con las preguntas editadas
+      // Primero, necesitamos crear una nueva sesión o usar la existente
+      const payload = {
+        topic,
+        difficulty,
+        types: Object.keys(types).filter((k) => types[k]),
+        counts,
+        questions: editedQuestions // Enviar las preguntas editadas
+      };
+
+      const res = await fetch(
+        `${API_BASE}/sessions/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          provider,
+          headerName
+        )
+      );
+
+      let json = {};
+      try {
+        json = await res.json();
+      } catch (_) {}
+
+      if (!res.ok) {
+        Swal.fire("Error", json?.error || "No se pudo crear la sesión", "error");
+        return;
+      }
+
+      const sessionId = json.session_id;
+
+      // Pop de éxito y luego redirigir
+      await Swal.fire({
+        title: "Sesión creada",
+        text: `ID: ${sessionId}`,
+        icon: "success",
+        confirmButtonText: "Ir al quiz",
+        timer: 1800,
+        timerProgressBar: true,
+      });
+
+      // Limpiar datos guardados después del éxito
+      clearSavedData();
+      navigate(`/quiz/${sessionId}`);
+    } catch (err) {
+      Swal.fire("Error", String(err), "error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleEditorCancel = () => {
+    setShowEditor(false);
+    setPreview(null);
+    setCurrentSessionId(null);
+  };
 
   // OBTENER MÉTRICAS (endpoint separado)
   async function handleGetMetrics() {
@@ -504,6 +617,19 @@ export default function QuizForm(props) {
     } finally {
       setCreating(false);
     }
+  }
+
+  // Si el editor está activo, mostrar el componente QuizPreviewEditor
+  if (showEditor && preview) {
+    return (
+      <QuizPreviewEditor
+        questions={preview}
+        config={{ topic, difficulty, types, counts }}
+        onConfirm={handleEditorConfirm}
+        onCancel={handleEditorCancel}
+        sessionId={currentSessionId}
+      />
+    );
   }
 
   return (
