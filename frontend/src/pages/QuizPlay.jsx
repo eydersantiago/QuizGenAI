@@ -18,8 +18,16 @@ import useContextTracker from "../hooks/useContextTracker";
 import { requestSuggestion, shouldShowSuggestion, SUGGESTION_CONFIG } from "../services/suggestionService";
 import ProactiveSuggestion from "../components/ProactiveSuggestion";
 // ========================================================================
+import { useVoiceHint } from "../voice/useVoiceHint";
 
 
+
+const sanitizeTTS = (s = "") =>
+  String(s)
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 
 
 // Convierte un AudioBuffer a WAV PCM16
@@ -82,6 +90,41 @@ async function webmToWav(blob) {
 
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
+
+
+async function fetchHintClient(questionPayload) {
+  // questionPayload puede ser string o el objeto de la pregunta
+  const body =
+    typeof questionPayload === "string"
+      ? { question: questionPayload }
+      : { question: questionPayload.question || "", meta: questionPayload };
+
+   // 1) Django/Backend propio
+   try {
+     const r = await fetch(`${API_BASE}/hint/`, {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+
+      body: JSON.stringify(body),
+     });
+     if (r.ok) {
+       const data = await r.json();
+       return data.hint || "No se generó pista.";
+     }
+   } catch (_) {}
+
+   // 2) Fallback: ruta /api/hint (p.ej. Next API route)
+  const r2 = await fetch(`/api/hint`, {
+     method: "POST",
+     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+   });
+   const data2 = await r2.json();
+   return data2.hint || "No se generó pista.";
+ }
+
+
+
 
 // Función para exportar a PDF
 const exportToPDF = (questions, answers, submitted) => {
@@ -189,6 +232,8 @@ const exportToPDF = (questions, answers, submitted) => {
   // Guardar el PDF
   pdf.save(`quiz_${new Date().toISOString().split("T")[0]}.pdf`);
 };
+
+
 
 // Función para exportar a TXT
 const exportToTXT = (questions, answers, submitted) => {
@@ -414,6 +459,87 @@ function LoadingScreen({ approx = 90 }) {
   );
 }
 
+// --- Helpers seguros para hablar pistas (evita 500 y hace fallback local) ---
+
+// --- SOLO PARA PISTA: TTS local (sin backend) ---
+const stripNonTTS = (s = "") =>
+  String(s)
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/[^\S\r\n]+/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .slice(0, 800);
+
+const canClientTTS = () =>
+  typeof window !== "undefined" &&
+  "speechSynthesis" in window &&
+  "SpeechSynthesisUtterance" in window;
+
+const speakLocalOnly = async (rawText) => {
+  const text = stripNonTTS(rawText || "");
+  if (!text || !canClientTTS()) return false;
+
+  // Asegura que las voces estén cargadas
+  const ensureVoices = () =>
+    new Promise((res) => {
+      const v = window.speechSynthesis.getVoices();
+      if (v && v.length) return res(v);
+      const onVoices = () => {
+        window.speechSynthesis.removeEventListener("voiceschanged", onVoices);
+        res(window.speechSynthesis.getVoices());
+      };
+      window.speechSynthesis.addEventListener("voiceschanged", onVoices);
+      // dispara una carga
+      window.speechSynthesis.getVoices();
+      // fallback por si no dispara el evento
+      setTimeout(() => res(window.speechSynthesis.getVoices() || []), 500);
+    });
+
+  try {
+    if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "es-ES";
+    const voices = await ensureVoices();
+    const v = voices.find(v => /es(-|_)?(ES|es)/i.test(v.lang)) || voices[0];
+    if (v) u.voice = v;
+
+    await new Promise((res) => {
+      u.onend = () => res(true);
+      u.onerror = () => res(false);
+      window.speechSynthesis.speak(u);
+    });
+    return true;
+  } catch (e) {
+    console.warn("[PISTA] Error SpeechSynthesis:", e);
+    return false;
+  }
+};
+
+// Alias opcional para que no-undef desaparezca si ya usabas este nombre
+const clientSpeak = speakLocalOnly;
+
+
+/**
+ * Habla de forma segura una pista usando:
+ * 1) speak() del hook (backend) SIN options (para no romper el parser del server)
+ * 2) Fallback a SpeechSynthesis si el backend falla
+ */
+// const safeSpeakHint = async (speakFn, rawText) => {
+//   const txt = stripNonTTS(rawText);
+//   if (!txt) return false;
+
+//   // IMPORTANTE: NO enviar { voice: ... } aquí. El backend está fallando
+//   // con "too many values to unpack (expected 2)" si recibe ciertos valores.
+//   try {
+//     await speakFn(txt);
+//     return true;
+//   } catch (e) {
+//     console.warn("[safeSpeakHint] backend TTS falló, usando fallback local:", e);
+//     return await clientSpeak(txt);
+//   }
+// };
 
 
 export default function QuizPlay(props) {
@@ -423,6 +549,12 @@ export default function QuizPlay(props) {
   const { provider, headerName } = useModelProvider();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const [hints, setHints] = useState({});
+
+
+
+
 
   // Panel "voz" desplegable por pregunta (idx => boolean)
   const [voiceOpen, setVoiceOpen] = useState({});
@@ -441,6 +573,14 @@ export default function QuizPlay(props) {
   // Funcionalidad de guardado
   const [saving, setSaving] = useState(false);
   const [savedQuizId, setSavedQuizId] = useState(null);
+
+  const { hint: voiceHint, listening, startListening } = useVoiceHint({
+    apiBase: API_BASE,
+    getCurrentQuestion: () => questions[currentQuestionIndex],
+    speakFn: (t) => clientSpeak(t), // ⬅️ local-only
+  });
+
+
   const [isLoadedQuiz, setIsLoadedQuiz] = useState(false);
   const [quizTitle, setQuizTitle] = useState("");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -686,6 +826,11 @@ export default function QuizPlay(props) {
     return () => window.removeEventListener('voice:intent', handler);
   }, [questions, currentQuestionIndex, answers, submitted, regenDrafts, speak]);
 
+  useEffect(() => {if (!voiceHint) return;
+   setHints((prev) => ({ ...prev, [currentQuestionIndex]: voiceHint }));
+}, [voiceHint, currentQuestionIndex]);
+
+
   const leerPreguntaActual = async () => {
     const q = questions[currentQuestionIndex];
     if (!q) return;
@@ -886,6 +1031,24 @@ export default function QuizPlay(props) {
       return clone;
     }
   };
+
+  const requestHintForQuestion = async (idx) => {
+    const q = questions[idx];
+    if (!q) return;
+    try {
+      const hintText = await fetchHintClient(q);
+      const clean = stripNonTTS(hintText || "No se generó pista.");
+      setHints((prev) => ({ ...prev, [idx]: clean }));
+
+      // 🔊 SOLO local; NO uses speak() del backend aquí
+      await clientSpeak(`Pista: ${clean}`);
+    } catch (e) {
+      console.error("requestHintForQuestion error:", e);
+      Swal.fire("Error", "No se pudo obtener la pista.", "error");
+    }
+  };
+
+
 
   const handleRegenerateAgain = async (idx) => {
     const newer = await requestRemoteRegeneration(idx);
@@ -1829,17 +1992,32 @@ export default function QuizPlay(props) {
                         >
                           🎙️ Dictar esta
                         </button>
-                        {/* 🧠 Nuevo botón: Pista por voz */}
                         <button
-                          className="btn btn-purple-outline"
-                          type="button"
-                          onClick={() => explainQuestion(idx)}
-                        >
-                          💡 Pista por voz
-                        </button>
+                        className="btn btn-purple-outline"
+                        type="button"
+                        onClick={() => startListening()}
+                        title={listening ? "Escuchando…" : "Decir: 'dame una pista'"}
+                      >
+                        💡 Pista por voz {listening ? " (escuchando…)" : ""}
+                      </button>
+
+                      <button
+                        className="btn btn-purple"
+                        type="button"
+                        onClick={() => requestHintForQuestion(idx)}
+                        title="Pedir pista (clic)"
+                      >
+                        💡 Pista
+                      </button>
                       </div>
                     )}
                   </div>
+
+                 {hints[idx] && (
+                  <div className="qp-hint" style={{ marginTop: 8 }}>
+                    <b>💡 Pista:</b> {hints[idx]}
+                  </div>
+                )}
 
                   {/* MCQ */}
                   {q.type === "mcq" && Array.isArray(q.options) && (
