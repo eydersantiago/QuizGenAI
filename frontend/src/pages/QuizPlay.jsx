@@ -312,47 +312,57 @@ const norm = (s = "") =>
     .replace(/\p{Diacritic}/gu, "")
     .trim();
 
-// Mapea palabras/numero -> letra
+// Mapea palabras/numero -> letra// Mapea numero/palabra ordinal -> letra (sin aceptar "a"/"b" como tokens sueltos)
+// Mapa número/palabra/ordinal -> letra
 const numToLetter = (w) => {
   const m = {
-    "1": "A", "uno": "A", "primera": "A", "la a": "A", "a": "A",
-    "2": "B", "dos": "B", "segunda": "B", "la b": "B", "b": "B",
-    "3": "C", "tres": "C", "tercera": "C", "la c": "C", "c": "C",
-    "4": "D", "cuatro": "D", "cuarta": "D", "la d": "D", "d": "D",
+    "1": "A", "uno": "A", "primera": "A", "primer": "A", "primero": "A",
+    "2": "B", "dos": "B", "segunda": "B", "segundo": "B",
+    "3": "C", "tres": "C", "tercera": "C", "tercero": "C",
+    "4": "D", "cuatro": "D", "cuarta": "D", "cuarto": "D",
   };
   return m[w] || null;
 };
 
-// Intenta extraer una letra A-D de frases comunes en español
 function extractLetter(text) {
   const t = norm(text);
 
-  // Patrones típicos
-  const patterns = [
-    /respuesta\s*([abcd])/i,
-    /op(c|s)ion\s*([abcd])/i,
-    /alternativa\s*([abcd])/i,
-    /\b(letra|la)\s*([abcd])\b/i,
-    /respuesta\s*(numero|nro|#)?\s*(\d+)/i,
-    /op(c|s)ion\s*(\d+)/i,
-    /\b(\d+|uno|dos|tres|cuatro)\b/i,
-    /\b([abcd])\b/i
-  ];
+  // Palabras clave que "desbloquean" el mapeo
+  const kw = "(respuesta|op[c|s]ion|alternativa|letra)";
+  // Palabras de número/ordinal comunes
+  const wordNum = "(uno|dos|tres|cuatro|primera|primer|primero|segunda|segundo|tercera|tercero|cuarta|cuarto)";
 
-  for (const re of patterns) {
-    const m = t.match(re);
-    if (!m) continue;
+  // 1) keyword + letra A-D
+  let m = t.match(new RegExp(`\\b${kw}\\s*(?:numero|nro|n\\.|#)?\\s*([abcd])\\b`, "i"));
+  if (m) return m[2].toUpperCase?.() || m[1].toUpperCase();
 
-    // Captura puede estar en el 1 o 2 según el patrón
-    const g = (m[2] || m[1] || "").toString();
-    // ¿número/palabra o letra?
-    const n = g.match(/^\d+$/) ? g : g;
-    const maybe = numToLetter(n);
-    if (maybe) return maybe;
+  // 2) keyword + dígito 1-4
+  m = t.match(new RegExp(`\\b${kw}\\s*(?:numero|nro|n\\.|#)?\\s*([1-4])\\b`, "i"));
+  if (m) return String.fromCharCode("A".charCodeAt(0) + (parseInt(m[2] ?? m[1], 10) - 1));
 
-    // Si ya es letra a-d
-    if (/[abcd]/.test(g)) return g.toUpperCase();
+  // 3) keyword + palabra número/ordinal (uno/dos/tres/cuatro/primera/.../cuarto)
+  m = t.match(new RegExp(`\\b${kw}\\s*(?:numero|nro|n\\.|#)?\\s*${wordNum}\\b`, "i"));
+  if (m) return numToLetter((m[2] ?? m[1]).toLowerCase());
+
+  // 4) Ordinal explícito sin keyword
+  m = t.match(/\b(primera|primer|primero|segunda|segundo|tercera|tercero|cuarta|cuarto)\b/i);
+  if (m) return numToLetter(m[1].toLowerCase());
+
+  // 5) Palabra-numero suelta (uno/dos/tres/cuatro) en frase corta
+  m = t.match(new RegExp(`^\\s*${wordNum}\\s*$`, "i"));
+  if (m) return numToLetter(m[1].toLowerCase());
+
+  // 6) Dígito suelto 1–4 en frase corta
+  const onlyNumber = t.match(/^\s*([1-4])\s*$/);
+  if (onlyNumber) {
+    const n = parseInt(onlyNumber[1], 10);
+    return String.fromCharCode("A".charCodeAt(0) + (n - 1));
   }
+
+  // 7) Letra suelta A–D solo si la frase es muy corta (evita confundir "a" en oraciones)
+  const onlyLetter = t.match(/^\s*([abcd])[\s,.;:!?-]*$/i);
+  if (onlyLetter && t.length <= 4) return onlyLetter[1].toUpperCase();
+
   return null;
 }
 
