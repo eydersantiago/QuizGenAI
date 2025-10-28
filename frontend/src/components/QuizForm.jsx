@@ -7,6 +7,8 @@ import "../estilos/QuizForm.css";
 import { useModelProvider, withProviderHeaders } from "../ModelProviderContext";
 import ModelProviderSelect from "../components/ModelProviderSelect";
 import { useVoiceCommands } from "../hooks/useVoiceCommands";
+import { getSlot, extractTypeCounts } from '../utils/voiceParsing';
+import QuizPreviewEditor from "./QuizPreviewEditor";
 
 const TAXONOMY = [
   "algoritmos", "estructura de datos", "complejidad computacional", "np-completitud",
@@ -180,6 +182,10 @@ export default function QuizForm(props) {
   const [creating, setCreating] = useState(false);
   const MAX_TOTAL = 20;
 
+  // Estado para controlar el modo de edición avanzado
+  const [showEditor, setShowEditor] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+
   // Clave para localStorage
   const AUTOSAVE_KEY = "quizform_autosave";
 
@@ -207,6 +213,96 @@ export default function QuizForm(props) {
       }
     }
   }, []);
+
+  // Escucha intents de voz para prellenar campos del formulario (contextual)
+  useEffect(() => {
+    const handler = (e) => {
+      const res = e.detail || {};
+      const text = (res.text || '').toLowerCase();
+      const intent = (res.intent || '').toLowerCase();
+
+      // slots detectados
+      const topicSlot = getSlot(res, 'topic');
+      const difficultySlot = getSlot(res, 'difficulty');
+      const countSlot = getSlot(res, 'count');
+      // extraer pares tipo+cantidad si vienen en la misma frase
+      const multiCounts = extractTypeCounts(text || '');
+      if (multiCounts && Object.keys(multiCounts).length > 0) {
+        setCounts((prev) => ({ ...prev, ...multiCounts }));
+      }
+
+      if (topicSlot) {
+        // Intent: prefer selecting an existing taxonomy item instead of creating a new free-text option
+        const tNorm = norm(String(topicSlot || ""));
+        const matched = TAXONOMY.find(
+          (x) => norm(x) === tNorm || norm(x).includes(tNorm) || tNorm.includes(norm(x))
+        );
+        if (matched) {
+          setTopic(matched);
+        } else {
+          // Try looser heuristics: startsWith / includes
+          const loose = TAXONOMY.find((x) => norm(x).startsWith(tNorm) || norm(x).includes(tNorm) || tNorm.startsWith(norm(x)));
+          if (loose) setTopic(loose);
+          else {
+            // Don't create a new taxonomy entry from voice — ask the user to pick or say a close match
+            try {
+                // speak is available from hook; fire-and-forget (catch to avoid uncaught rejections)
+                speak(`No encontré el tema "${topicSlot}" en la lista. Por favor di el nombre exacto de un tema disponible.`).catch(()=>{});
+              } catch (_) {}
+          }
+        }
+      }
+      if (difficultySlot) {
+        setDifficulty(difficultySlot);
+      }
+      if (countSlot) {
+        // Determinar a qué tipo de pregunta se refiere el comando de voz
+        const n = Number(countSlot);
+        if (!Number.isNaN(n)) {
+          const t = text;
+          let target = null;
+
+          // palabras clave para verdadero/falso (revisar primero)
+          if (/\b(vf|v\/f|v\s+f|verdader[oa]s?|verdader[oa]|fals[oa]s?|falso|verdadero-falso|verdadero\s*y\s*falso)\b/.test(t)) {
+            target = 'vf';
+          }
+          // palabras clave para opción múltiple
+          else if (/\b(mcq|opci[oó]n(es)?\s+m(u|ú)ltiple|opcion(es)?\s+m(u|ú)ltiple|m(u|ú)ltiple|opci[oó]n)\b/.test(t)) {
+            target = 'mcq';
+          }
+          // palabras clave para respuesta corta
+          else if (/\b(corta|respuesta corta|short|texto)\b/.test(t)) {
+            target = 'short';
+          }
+          // si no se detecta tipo explícito, usar heurística: si únicamente mencionó un número, asignar a mcq
+          else {
+            target = 'mcq';
+          }
+          
+
+          setCounts((prev) => ({ ...prev, [target]: Math.max(0, Math.min(20, n)) }));
+
+          try {
+            // fire-and-forget but avoid unhandled promise rejection
+            speak(`Asignado ${n} preguntas de ${target === 'mcq' ? 'opción múltiple' : target === 'vf' ? 'verdadero/falso' : 'respuesta corta'}`).catch(()=>{});
+          } catch (_) {}
+        }
+      }
+
+      // acciones: previsualizar / crear
+      if (/previsualiz|previsualizar/.test(text) || intent.includes('preview')) {
+        handlePreview();
+        return;
+      }
+      if (/crear sesi[oó]n|crear session|crear sesion|crear$|crear quiz|crear cuestionario/.test(text) || intent.includes('create')) {
+        handleCreate();
+        return;
+      }
+    };
+
+    window.addEventListener('voice:intent', handler);
+    return () => window.removeEventListener('voice:intent', handler);
+  }, [setTopic, setDifficulty, setCounts, handlePreview, handleCreate, speak]);
 
   // Función para guardar automáticamente
   const autoSave = useCallback(() => {
@@ -280,31 +376,73 @@ export default function QuizForm(props) {
 
   async function handlePreview() {
     if (!validate()) return;
-    const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
 
-    const res = await fetch(
-      `${API_BASE}/preview/`,
-      withProviderHeaders(
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-        provider,
-        headerName
-      )
-    );
-    const json = await res.json();
+    // Primero crear una sesión temporal para obtener un sessionId
+    try {
+      setCreating(true);
+      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
 
-    const usedHeader = res.headers.get("x-llm-effective-provider");
-    const fbHeader = res.headers.get("x-llm-fallback");
+      // Crear sesión temporal
+      const sessionRes = await fetch(
+        `${API_BASE}/sessions/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          provider,
+          headerName
+        )
+      );
 
-    const used = usedHeader || json.source;           // respaldo al body
-    const fallback = (fbHeader ?? (json.fallback_used ? "1" : "0")) === "1";
+      if (!sessionRes.ok) {
+        const error = await sessionRes.json();
+        Swal.fire("Error", error.error || "No se pudo crear la sesión", "error");
+        return;
+      }
 
-    console.log("[LLM] requested:", provider, "used:", used, "fallback:", fallback);
-    if (res.ok) setPreview(json.preview);
-    else Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
+      const sessionData = await sessionRes.json();
+      const sessionId = sessionData.session_id;
+      setCurrentSessionId(sessionId);
+
+      // Ahora obtener el preview con el sessionId
+      const previewRes = await fetch(
+        `${API_BASE}/preview/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, session_id: sessionId }),
+          },
+          provider,
+          headerName
+        )
+      );
+
+      const json = await previewRes.json();
+
+      const usedHeader = previewRes.headers.get("x-llm-effective-provider");
+      const fbHeader = previewRes.headers.get("x-llm-fallback");
+
+      const used = usedHeader || json.source;
+      const fallback = (fbHeader ?? (json.fallback_used ? "1" : "0")) === "1";
+
+      console.log("[LLM] requested:", provider, "used:", used, "fallback:", fallback);
+
+      if (previewRes.ok) {
+        setPreview(json.preview);
+        // Activar el modo editor
+        setShowEditor(true);
+      } else {
+        Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
+      }
+    } catch (err) {
+      console.error("Error en preview:", err);
+      Swal.fire("Error", String(err), "error");
+    } finally {
+      setCreating(false);
+    }
   }
 
   // CREA SESIÓN (separado de métricas)
@@ -313,7 +451,6 @@ export default function QuizForm(props) {
     try {
       setCreating(true);
       const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
-
       const res = await fetch(
         `${API_BASE}/sessions/`,
         withProviderHeaders(
@@ -359,6 +496,72 @@ export default function QuizForm(props) {
       setCreating(false);
     }
   }
+
+  // CALLBACKS PARA EL EDITOR
+  const handleEditorConfirm = async (editedQuestions) => {
+    try {
+      setCreating(true);
+
+      // Crear el quiz con las preguntas editadas
+      // Primero, necesitamos crear una nueva sesión o usar la existente
+      const payload = {
+        topic,
+        difficulty,
+        types: Object.keys(types).filter((k) => types[k]),
+        counts,
+        questions: editedQuestions // Enviar las preguntas editadas
+      };
+
+      const res = await fetch(
+        `${API_BASE}/sessions/`,
+        withProviderHeaders(
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          provider,
+          headerName
+        )
+      );
+
+      let json = {};
+      try {
+        json = await res.json();
+      } catch (_) {}
+
+      if (!res.ok) {
+        Swal.fire("Error", json?.error || "No se pudo crear la sesión", "error");
+        return;
+      }
+
+      const sessionId = json.session_id;
+
+      // Pop de éxito y luego redirigir
+      await Swal.fire({
+        title: "Sesión creada",
+        text: `ID: ${sessionId}`,
+        icon: "success",
+        confirmButtonText: "Ir al quiz",
+        timer: 1800,
+        timerProgressBar: true,
+      });
+
+      // Limpiar datos guardados después del éxito
+      clearSavedData();
+      navigate(`/quiz/${sessionId}`);
+    } catch (err) {
+      Swal.fire("Error", String(err), "error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleEditorCancel = () => {
+    setShowEditor(false);
+    setPreview(null);
+    setCurrentSessionId(null);
+  };
 
   // OBTENER MÉTRICAS (endpoint separado)
   async function handleGetMetrics() {
@@ -414,6 +617,19 @@ export default function QuizForm(props) {
     } finally {
       setCreating(false);
     }
+  }
+
+  // Si el editor está activo, mostrar el componente QuizPreviewEditor
+  if (showEditor && preview) {
+    return (
+      <QuizPreviewEditor
+        questions={preview}
+        config={{ topic, difficulty, types, counts }}
+        onConfirm={handleEditorConfirm}
+        onCancel={handleEditorCancel}
+        sessionId={currentSessionId}
+      />
+    );
   }
 
   return (

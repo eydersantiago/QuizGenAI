@@ -51,7 +51,6 @@ class IntentRouterService {
     const cacheKey = text.toLowerCase().trim();
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      console.log('Intent cache hit:', cacheKey);
       return cached.result;
     }
 
@@ -173,27 +172,90 @@ class IntentRouterService {
   _localFallback(text) {
     const textLower = text.toLowerCase().trim();
 
-    // Patrones básicos locales
+    // Patrones básicos locales (más sinónimos y variantes)
+    // Nota: el orden prioriza patrones más específicos primero
     const patterns = {
-      navigate_next: /siguiente|próxima?|continua?r?|adelante|next|avanza|sigue/,
-      navigate_previous: /anterior|atrás|volver|back/,
-      generate_quiz: /genera?|crea?|arma|haz|hazme|quiz|cuestionario|test/,
-      read_question: /lee?|leer|pregunta/,
-      show_answers: /muestra?|mostrar|ver|respuestas?|opciones/,
-      repeat: /repite?|repetir|otra\s+vez|de\s+nuevo/,
-      pause: /pausa?|pausar|detene?r?|stop/,
-      resume: /continua?r?|reanuda?r?|resume/,
-      skip: /salta?r?|omitir|skip/,
-      finish: /terminar|finalizar|salir|finish/,
-      slower: /lento|despacio|slower/
+      // ========== MARCADO DE PREGUNTAS (NUEVO) ==========
+      // Marcar pregunta actual
+      mark_question: /\b(marca?r?|marcar|marca|guardame|guardar|guarda|agregar?|agrega|añade|añadir|favorita?|importante|recordar)\b.*\b(pregunta|esta|ésta|actual|favorita|favoritas)\b|\b(pregunta\s+favorita|añadir\s+favorita|guardar\s+pregunta|marcar\s+como\s+favorita)\b/,
+
+      // Desmarcar pregunta
+      unmark_question: /\b(desmarcar|desmarca|quitar\s+marca|remover\s+marca|quitar|eliminar\s+marca|ya\s+no|borrar\s+marca)\b.*\b(pregunta|marca|favorita|esta)\b|\b(no\s+favorita|quitar\s+de\s+favoritas)\b/,
+
+      // Listar preguntas marcadas
+      list_marked: /\b(cu[aá]ntas|cuantas|cu[áa]ntas\s+preguntas|cuantos|cu[áa]ntos|lista|listar|mostrar|ver|dime|cuales|cu[áa]les)\b.*\b(marcadas?|favoritas?|guardadas?|importantes?)\b|\b(preguntas\s+marcadas|marcadas\s+hay|tengo\s+marcadas)\b/,
+
+      // Generar quiz de repaso
+      generate_review: /\b(repasar|repasa|repaso|generar?\s+repaso|genera\s+repaso|crear?\s+repaso|crea\s+repaso|revisar|practicar)\b.*\b(marcadas?|favoritas?|guardadas?|importantes?)\b|\b(quiz\s+de\s+repaso|cuestionario\s+de\s+repaso|repasar\s+favoritas)\b/,
+
+      // Navegar a siguiente pregunta marcada
+      goto_next_marked: /\b(siguiente|próxima?|ir\s+a\s+la?\s+siguiente|pasar\s+a\s+la?\s+siguiente)\b.*\b(marcada|favorita|guardada|importante)\b|\b(pregunta\s+marcada\s+siguiente)\b/,
+
+      // Navegar a anterior pregunta marcada
+      goto_prev_marked: /\b(anterior|volver\s+a\s+la?\s+anterior|ir\s+a\s+la?\s+anterior)\b.*\b(marcada|favorita|guardada|importante)\b|\b(pregunta\s+marcada\s+anterior)\b/,
+
+      // ========== COMANDOS EXISTENTES ==========
+      // Destructivas / estructurales
+      delete_question: /\b(eliminar|borra?r?|borrar|quitar|suprimir|sacar|remover|quita)\b/,
+      duplicate_question: /\b(duplicar|clonar|copiar|haz\s+una\s+copia|duplicame|duplicar\s+pregunta)\b/,
+
+      // Export / descargar
+      export_pdf: /\b(exportar|exporta|descargar|guardar|generar|imprimir|bajar)\b.*\b(pdf|como pdf|en pdf)\b/,
+      export_txt: /\b(exportar|exporta|descargar|guardar|bajar)\b.*\b(txt|texto|txt|archivo de texto)\b/,
+      export_quiz: /\b(exportar|exporta|descargar|guardar|bajar|export)\b/,
+
+      // Regenerar / reemplazar
+      regenerate_quiz: /\b(regenerar|regenera|vuelve?\s+a\s+generar|volver\s+a\s+crear|reemplazar|sustituir|renovar)\b/,
+
+      // Navegación
+      navigate_next: /\b(siguiente|próxima?|continua?r?|adelante|next|avanza|sigue|pasar|pasa)\b/,
+      navigate_previous: /\b(anterior|atr[aá]s|volver|back|retrocede|regresa)\b/,
+
+      // Interacción con pregunta
+      read_question: /\b(lee?r?|leer|pregunta|leer\s+la\s+pregunta|leer\s+pregunta)\b/,
+      show_answers: /\b(muestra?r?|mostrar|ver|respuestas?|opciones|ensena|enséñame)\b/,
+
+      // Generación de quiz
+      generate_quiz: /\b(genera?r?|crea?r?|arma?r?|haz|hazme|genera|crea|arma|quiz|cuestionario|test|preguntas)\b/,
+
+      // Repetir / pausa / reanudar
+      repeat: /\b(repite?|repetir|otra\s+vez|de\s+nuevo|otra)\b/,
+      pause: /\b(pausa?|pausar|detener|detene?r?|stop|para)\b/,
+      resume: /\b(continua?r?|reanuda?r?|resume|seguir)\b/,
+      skip: /\b(salta?r?|omitir|skip|siguiente)\b/,
+      finish: /\b(terminar|finalizar|salir|finish|acabar)\b/,
+      slower: /\b(lento|despacio|slower|mas lento|más lento)\b/
     };
 
     for (const [intent, pattern] of Object.entries(patterns)) {
       if (pattern.test(textLower)) {
+        // Extraído simple de slots: número y tema/dificultad para generación
+        const slots = {};
+        // número: "10 preguntas", "diez preguntas"
+        const numMatch = textLower.match(/(\d+)|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez/);
+        if (numMatch) {
+          let n = numMatch[0];
+          // convetir texto a número si es palabra (muy básico)
+          const numWords = { uno:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10 };
+          if (isNaN(Number(n))) n = numWords[n] || null;
+          slots.count = n ? Number(n) : undefined;
+        }
+        // tema: "sobre geografía", "de historia"
+        const temaMatch = textLower.match(/(?:sobre|de|acerca de)\s+([a-záéíóúñ0-9\s]+)/);
+        if (temaMatch) slots.topic = (temaMatch[1] || '').trim();
+        // dificultad: normalizar a 'Fácil' | 'Media' | 'Difícil'
+        const difMatch = textLower.match(/\b(f(a|á)cil|facil|sencillo|baja\s+dificultad|bajo)\b|\b(medi[oa]|intermedio|intermedia|normal|regular|moderad[oa]|nivel\s+medio)\b|\b(dif(i|í)cil|dificil|complicad[oa]|duro|avanzad[oa]|alta\s+dificultad|experto|profundo)\b/);
+        if (difMatch) {
+          const hit = difMatch[0];
+          if (/\b(f(a|á)cil|facil|sencillo|baja\s+dificultad|bajo)\b/.test(hit)) slots.difficulty = 'Fácil';
+          else if (/\b(medi[oa]|intermedio|intermedia|normal|regular|moderad[oa]|nivel\s+medio)\b/.test(hit)) slots.difficulty = 'Media';
+          else slots.difficulty = 'Difícil';
+        }
+
         return {
           intent,
           confidence: 0.6,
-          slots: {},
+          slots,
           backendUsed: 'local_fallback',
           latencyMs: 0,
           warning: 'Using local fallback'

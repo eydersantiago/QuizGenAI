@@ -14,6 +14,13 @@ from .serializers import (
     SaveQuizRequestSerializer,
     UpdateQuizProgressSerializer
 )
+from .views import (
+    regenerate_question_with_gemini,
+    regenerate_question_with_pplx,
+    _regenerate_with_fallback,
+    _header_provider,
+    _norm_for_cmp
+)
 
 
 @api_view(['GET', 'POST'])
@@ -84,6 +91,21 @@ def saved_quizzes(request):
             counts = data.get('counts', {'mcq': len(questions)})
             category = ''
         
+        # Detectar si es un quiz de repaso (tiene original_quiz_id)
+        original_quiz_id = data.get('original_quiz_id')
+        original_quiz = None
+
+        if original_quiz_id:
+            try:
+                original_quiz = SavedQuiz.objects.get(id=original_quiz_id)
+                # Verificación de seguridad: no permitir cadenas profundas
+                # Si el "original" ya es un repaso, usar su quiz raíz
+                original_quiz = original_quiz.get_root_quiz()
+            except SavedQuiz.DoesNotExist:
+                # Si no existe el original, continuar sin relación
+                # (no bloqueamos el guardado por esto)
+                pass
+
         # Crear el cuestionario guardado
         saved_quiz = SavedQuiz.objects.create(
             title=data['title'],
@@ -94,7 +116,8 @@ def saved_quizzes(request):
             counts=counts,
             questions=questions,
             user_answers=data.get('user_answers', {}),
-            current_question=data.get('current_question', 0)
+            current_question=data.get('current_question', 0),
+            original_quiz=original_quiz  # Establecer relación jerárquica
         )
         
         serializer = SavedQuizSerializer(saved_quiz)
@@ -210,6 +233,70 @@ def load_saved_quiz(request, quiz_id):
         }, status=500)
 
 
+@api_view(['PATCH'])
+def toggle_favorite_question(request, quiz_id):
+    """
+    PATCH: Marca o desmarca una pregunta como favorita (toggle)
+
+    Body params:
+        - question_index (int): Índice de la pregunta a marcar/desmarcar
+
+    Returns:
+        - favorite_questions: Lista actualizada de preguntas favoritas
+        - is_favorite: Estado actual de la pregunta (True si fue marcada, False si fue desmarcada)
+    """
+    # Validar que el quiz existe
+    saved_quiz = get_object_or_404(SavedQuiz, id=quiz_id)
+
+    # Obtener el índice de la pregunta del body
+    question_index = request.data.get('question_index')
+
+    # Validar que se proporcionó el índice
+    if question_index is None:
+        return JsonResponse({
+            'error': 'El campo question_index es requerido'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Validar que sea un número entero
+    try:
+        question_index = int(question_index)
+    except (ValueError, TypeError):
+        return JsonResponse({
+            'error': 'El índice de la pregunta debe ser un número entero'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Validar que el índice esté dentro del rango válido
+    if question_index < 0 or question_index >= len(saved_quiz.questions):
+        return JsonResponse({
+            'error': f'Índice de pregunta inválido. Debe estar entre 0 y {len(saved_quiz.questions) - 1}'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Inicializar favorite_questions si es None o no es una lista
+    if saved_quiz.favorite_questions is None or not isinstance(saved_quiz.favorite_questions, list):
+        saved_quiz.favorite_questions = []
+
+    # Toggle: agregar o remover el índice
+    is_favorite = False
+    if question_index in saved_quiz.favorite_questions:
+        # Ya está marcada, desmarcamos
+        saved_quiz.favorite_questions.remove(question_index)
+        is_favorite = False
+    else:
+        # No está marcada, marcamos
+        saved_quiz.favorite_questions.append(question_index)
+        is_favorite = True
+
+    # Actualizar solo el campo necesario para optimizar
+    saved_quiz.save(update_fields=['favorite_questions', 'updated_at'])
+
+    return JsonResponse({
+        'message': f'Pregunta {"marcada" if is_favorite else "desmarcada"} como favorita exitosamente',
+        'favorite_questions': saved_quiz.favorite_questions,
+        'is_favorite': is_favorite,
+        'question_index': question_index
+    }, status=status.HTTP_200_OK)
+
+
 @api_view(['GET'])
 def quiz_statistics(request):
     """
@@ -269,3 +356,165 @@ def quiz_statistics(request):
             'error': 'Error al obtener estadísticas',
             'details': str(e)
         }, status=500)
+
+
+@api_view(['POST'])
+def generate_review_quiz(request, quiz_id):
+    """
+    POST: Genera un nuevo quiz compuesto por variantes de las preguntas favoritas
+
+    Parámetros:
+        - quiz_id (UUID): ID del quiz original con preguntas marcadas como favoritas
+
+    Retorna:
+        - session_id: ID de la nueva sesión de generación creada
+        - questions: Array de variantes generadas
+        - original_quiz_id: ID del quiz original para trazabilidad
+        - topic: Tema del quiz de repaso
+        - count: Cantidad de preguntas generadas
+
+    Errores:
+        - 404: Quiz no encontrado
+        - 400: No hay preguntas marcadas como favoritas
+        - 500: Error en la generación de variantes
+        - 503: Sin créditos en proveedores LLM
+    """
+    # Validar que el quiz existe
+    saved_quiz = get_object_or_404(SavedQuiz, id=quiz_id)
+
+    # NUEVA VALIDACIÓN: Verificar si se puede crear repaso desde este quiz
+    can_create, reason = saved_quiz.can_create_review()
+    if not can_create:
+        # Si es un quiz de repaso, sugerir usar el original
+        if saved_quiz.is_review_quiz():
+            original = saved_quiz.original_quiz
+            return JsonResponse({
+                'error': 'No se puede crear repaso de un repaso',
+                'message': reason,
+                'suggestion': 'Usa el quiz original para generar un nuevo repaso',
+                'original_quiz_id': str(original.id) if original else None,
+                'original_quiz_title': original.title if original else None
+            }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # No hay preguntas marcadas
+            return JsonResponse({
+                'error': 'No hay preguntas marcadas',
+                'message': reason
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Obtener preguntas marcadas (validadas por can_create_review)
+    favorite_questions = saved_quiz.favorite_questions
+
+    # Validar que los índices estén dentro del rango
+    questions = saved_quiz.questions
+    if not questions or not isinstance(questions, list):
+        return JsonResponse({
+            'error': 'Quiz sin preguntas válidas',
+            'message': 'El quiz no contiene preguntas válidas.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Filtrar índices válidos
+    valid_indices = [idx for idx in favorite_questions if 0 <= idx < len(questions)]
+    if not valid_indices:
+        return JsonResponse({
+            'error': 'Índices de preguntas favoritas inválidos',
+            'message': 'Ninguno de los índices de preguntas favoritas es válido para este quiz.'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Obtener configuración del proveedor LLM
+    preferred = _header_provider(request)
+
+    try:
+        # Recuperar las preguntas favoritas completas
+        favorite_base_questions = [questions[idx] for idx in valid_indices]
+
+        # Generar variantes para cada pregunta favorita
+        generated_variants = []
+        seen_phrases = set()
+
+        for base_question in favorite_base_questions:
+            # Obtener datos de la pregunta base
+            qtype = base_question.get('type', 'mcq')
+            question_text = base_question.get('question', '')
+
+            # Agregar el texto de la pregunta base al conjunto de frases a evitar
+            seen_phrases.add(_norm_for_cmp(question_text))
+
+            # Crear conjunto de frases a evitar para esta pregunta
+            avoid_phrases = seen_phrases.copy()
+
+            try:
+                # Llamar a la función de regeneración con fallback
+                variant, provider_used, did_fallback, errors = _regenerate_with_fallback(
+                    topic=saved_quiz.topic,
+                    difficulty=saved_quiz.difficulty,
+                    qtype=qtype,
+                    base_q=base_question,
+                    avoid_phrases=avoid_phrases,
+                    preferred=preferred
+                )
+
+                # Agregar la variante generada
+                generated_variants.append(variant)
+
+                # Agregar el texto de la variante al conjunto de frases a evitar
+                variant_text = variant.get('question', '')
+                seen_phrases.add(_norm_for_cmp(variant_text))
+
+            except RuntimeError as e:
+                if str(e) == "no_providers_available":
+                    return JsonResponse({
+                        'error': 'no_providers_available',
+                        'message': 'No hay créditos disponibles en los proveedores LLM (Perplexity/Gemini).'
+                    }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+                else:
+                    # Si falla la generación de una variante, continuar con las demás
+                    # pero registrar el error
+                    continue
+
+        # Verificar que se generaron al menos algunas variantes
+        if not generated_variants:
+            return JsonResponse({
+                'error': 'No se pudieron generar variantes',
+                'message': 'No fue posible generar variantes para ninguna de las preguntas favoritas.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Crear una nueva GenerationSession para el quiz de repaso
+        review_topic = f"Repaso: {saved_quiz.topic}"
+
+        # Calcular tipos y conteos basados en las variantes generadas
+        types_count = {}
+        for variant in generated_variants:
+            vtype = variant.get('type', 'mcq')
+            types_count[vtype] = types_count.get(vtype, 0) + 1
+
+        types = list(types_count.keys())
+
+        with transaction.atomic():
+            review_session = GenerationSession.objects.create(
+                topic=review_topic,
+                category=saved_quiz.category,
+                difficulty=saved_quiz.difficulty,
+                types=types,
+                counts=types_count,
+                latest_preview=generated_variants
+            )
+
+        # Retornar respuesta exitosa
+        return JsonResponse({
+            'message': 'Quiz de repaso generado exitosamente',
+            'session_id': str(review_session.id),
+            'original_quiz_id': str(saved_quiz.id),
+            'topic': review_topic,
+            'difficulty': saved_quiz.difficulty,
+            'questions': generated_variants,
+            'count': len(generated_variants),
+            'types': types,
+            'counts': types_count
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Error al generar quiz de repaso',
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

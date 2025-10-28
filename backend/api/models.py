@@ -84,7 +84,22 @@ class SavedQuiz(models.Model):
     current_question = models.PositiveIntegerField(default=0, help_text="Índice de la pregunta actual")
     is_completed = models.BooleanField(default=False, help_text="Si el cuestionario fue completado")
     score = models.JSONField(default=dict, blank=True, help_text="Puntaje y detalles de evaluación")
-    
+    favorite_questions = JSONField(
+        default=list,
+        blank=True,
+        help_text="Lista de índices de preguntas marcadas como favoritas para repaso posterior. Ejemplo: [0, 3, 7] representa las preguntas en las posiciones 0, 3 y 7."
+    )
+
+    # Relación jerárquica para quizzes de repaso
+    original_quiz = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='review_quizzes',
+        help_text="Si este es un quiz de repaso, referencia al quiz original del que proviene. Permite trazabilidad de la cadena de repaso."
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -111,6 +126,32 @@ class SavedQuiz(models.Model):
         if self.is_completed:
             return 100
         return int((self.current_question / len(self.questions)) * 100)
+
+    def is_review_quiz(self):
+        """Retorna True si este quiz es un repaso (tiene quiz original)"""
+        return self.original_quiz is not None
+
+    def get_root_quiz(self):
+        """
+        Retorna el quiz raíz de la cadena jerárquica.
+        En la implementación actual (un nivel), retorna original_quiz o self.
+        """
+        return self.original_quiz if self.original_quiz else self
+
+    def can_create_review(self):
+        """
+        Determina si se puede crear un quiz de repaso desde este quiz.
+        Retorna (can_create: bool, reason: str)
+        """
+        # No permitir repaso de un repaso
+        if self.is_review_quiz():
+            return False, "Este quiz ya es un repaso. Para repasar nuevamente, usa el quiz original."
+
+        # Verificar que tenga preguntas marcadas
+        if not self.favorite_questions or len(self.favorite_questions) == 0:
+            return False, "No hay preguntas marcadas en este quiz."
+
+        return True, "OK"
 
     def get_answered_count(self):
         """Retorna la cantidad de preguntas respondidas"""

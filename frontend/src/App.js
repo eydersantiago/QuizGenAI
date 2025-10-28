@@ -1,6 +1,8 @@
-import { Routes, Route, useLocation, Link } from "react-router-dom";
+import { Routes, Route, useLocation, Link, useNavigate } from "react-router-dom";
 import "./App.css";
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
+import { useVoiceCommands } from "./hooks/useVoiceCommands";
+import { getSlot } from './utils/voiceParsing';
 import QuizForm from "./components/QuizForm";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
@@ -16,11 +18,63 @@ import ModelProviderSelect from "./components/ModelProviderSelect";
 import AudioPrivacySettings from "./components/AudioPrivacy/AudioPrivacySettings";
 // Panel de voz
 import VoiceCommandPanel from "./components/VoiceCommands/VoiceCommandPanel";
+import VoiceChatWidget from "./components/VoiceCommands/VoiceChatWidget";
 
 function App() {
   const location = useLocation();
   const [sessionId] = React.useState(()=> uuidv4());
   React.useEffect(()=> { setVoiceMetricsSession(sessionId); }, [sessionId]);
+  // voiceOpen removed: widget manages its own open state
+  const navigate = useNavigate();
+  const { speak } = useVoiceCommands({ sessionId });
+
+  // Escucha intents globales para acciones globales (navegación, crear quiz desde slots)
+  useEffect(() => {
+    const handler = async (e) => {
+      const res = e.detail || {};
+      const intent = (res.intent || '').toLowerCase();
+      const text = (res.text || '').toLowerCase();
+
+      // Helper: obtener slot si existe o parsear del texto
+      // use shared getSlot util which handles both result.slots and text heuristics
+      const getSlotLocal = (name) => getSlot(res, name);
+
+      // Generar quiz: guarda en localStorage para prellenar QuizForm y navega a /
+      // Usamos límites de palabra para evitar falsos positivos como 'regenerar'
+      if (intent.includes('generate') || /\b(generar|genera|crea|crear|arma|haz)\b/.test(text)) {
+        const topic = getSlotLocal('topic') || '';
+        const difficulty = getSlotLocal('difficulty') || 'Fácil';
+        const count = getSlotLocal('count') || 5;
+
+        const autosave = {
+          topic,
+          difficulty,
+          types: { mcq: true, vf: false, short: false },
+          counts: { mcq: Number(count) || 5, vf: 0, short: 0 },
+          timestamp: new Date().toISOString(),
+        };
+        try { localStorage.setItem('quizform_autosave', JSON.stringify(autosave)); } catch (e) {}
+        try { await speak(`Creando borrador de quiz sobre ${topic || 'el tema indicado'} dificultad ${difficulty}`); } catch (e) {}
+        navigate('/');
+        return;
+      }
+
+      // Abrir lista de quizzes guardados
+      if (intent.includes('saved') || /mis quizzes|mis cuestionarios|guardad/.test(text)) {
+        navigate('/saved-quizzes');
+        return;
+      }
+
+      // Ir a métricas/admin
+      if (/métric|metricas|admin|estadís|estadisticas/.test(text)) {
+        navigate('/admin/metrics');
+        return;
+      }
+    };
+
+    window.addEventListener('voice:intent', handler);
+    return () => window.removeEventListener('voice:intent', handler);
+  }, [navigate, speak, sessionId]);
   const isPlay = location.pathname.startsWith("/quiz/");
   const isMetrics = location.pathname.startsWith("/admin/");
   const isSavedQuizzes = location.pathname === "/saved-quizzes";
@@ -61,7 +115,7 @@ function App() {
               </Link>
               <ModelProviderSelect compact />
             </div>
-          )}0
+          )}
 
           
 
@@ -121,6 +175,9 @@ function App() {
             <span>Proyecto Integrador II — MVP1</span>
             <a href="/settings/audio-privacy" className="ml-4">Privacidad de audio</a>
           </footer>
+
+          {/* Widget reducido de chat de voz (abre pequeña ventana de escucha) */}
+          <VoiceChatWidget sessionId={sessionId} onCommand={() => {}} />
         </main>
       </div>
     </ModelProviderProvider>
