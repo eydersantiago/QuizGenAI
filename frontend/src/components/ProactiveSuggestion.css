@@ -9,7 +9,8 @@
 .proactive-suggestion {
   position: fixed;
   bottom: 24px;
-  right: 24px;
+  left: 24px;
+  right: auto;
   max-width: 420px;
   min-width: 320px;
   background: linear-gradient(135deg, #1a1f3a 0%, #0f1222 100%);

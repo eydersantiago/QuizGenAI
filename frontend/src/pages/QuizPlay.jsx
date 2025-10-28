@@ -3101,14 +3101,16 @@ export default function QuizPlay(props) {
 
       {/* ========== ADDED: QGAI-104 Proactive Suggestion Component ========== */}
       {showSuggestion && currentSuggestion && (
-        <ProactiveSuggestion
-          suggestion={currentSuggestion}
-          onAccept={handleAcceptSuggestion}
-          onDismiss={handleDismissSuggestion}
-          sessionId={sessionId}
-          ttsEnabled={false} // TTS deshabilitado por ahora para no bloquear
-          isTTSSpeaking={false}
-        />
+        <div className="qp-suggestion-left">
+          <ProactiveSuggestion
+            suggestion={currentSuggestion}
+            onAccept={handleAcceptSuggestion}
+            onDismiss={handleDismissSuggestion}
+            sessionId={sessionId}
+            ttsEnabled={false}
+            isTTSSpeaking={false}
+          />
+        </div>
       )}
       {/* ==================================================================== */}
     </main>

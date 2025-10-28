@@ -1153,6 +1153,56 @@
   }
 }
 
+/* Sugerencia proactiva flotante a la derecha */
+.qp-suggestion-float {
+  position: fixed;            /* fuera del flujo, siempre visible */
+  right: 20px;                /* pegado al borde derecho */
+  bottom: 24px;               /* altura cómoda sobre el borde inferior */
+  max-width: min(420px, 92vw);
+  z-index: 9999;              /* por encima de overlays locales */
+  display: flex;
+  justify-content: flex-end;  /* alinea el contenido hacia la derecha */
+  pointer-events: none;       /* permite clics “a través”… */
+}
 
+/* …pero el componente sí debe recibir eventos */
+.qp-suggestion-float > * {
+  pointer-events: auto;
+}
+
+/* Evita invadir la UI en pantallas pequeñas */
+@media (max-width: 640px) {
+  .qp-suggestion-float {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    justify-content: center;  /* centrado en mobile para no tapar botones */
+  }
+}
+
+/* ProactiveSuggestion: flotante a la IZQUIERDA */
+.qp-suggestion-left {
+  position: fixed;        /* flota sobre la UI */
+  left: 16px;             /* pegado al borde izquierdo */
+  bottom: 16px;           /* esquina inferior */
+  z-index: 60;            /* por encima de cards y panel de voz */
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;   /* evita bloquear clics fuera del widget */
+}
+
+/* permite interacción solo dentro del componente */
+.qp-suggestion-left > * {
+  pointer-events: auto;
+}
+
+/* móvil: dale un poco más de aire */
+@media (max-width: 640px) {
+  .qp-suggestion-left {
+    left: 10px;
+    right: 10px;          /* opcional: que no desborde */
+    bottom: 10px;
+  }
+}
 
 
