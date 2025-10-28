@@ -99,29 +99,29 @@ async function fetchHintClient(questionPayload) {
       ? { question: questionPayload }
       : { question: questionPayload.question || "", meta: questionPayload };
 
-   // 1) Django/Backend propio
-   try {
-     const r = await fetch(`${API_BASE}/hint/`, {
-       method: "POST",
-       headers: { "Content-Type": "application/json" },
+  // 1) Django/Backend propio
+  try {
+    const r = await fetch(`${API_BASE}/hint/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
 
       body: JSON.stringify(body),
-     });
-     if (r.ok) {
-       const data = await r.json();
-       return data.hint || "No se generó pista.";
-     }
-   } catch (_) {}
+    });
+    if (r.ok) {
+      const data = await r.json();
+      return data.hint || "No se generó pista.";
+    }
+  } catch (_) { }
 
-   // 2) Fallback: ruta /api/hint (p.ej. Next API route)
+  // 2) Fallback: ruta /api/hint (p.ej. Next API route)
   const r2 = await fetch(`/api/hint`, {
-     method: "POST",
-     headers: { "Content-Type": "application/json" },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-   });
-   const data2 = await r2.json();
-   return data2.hint || "No se generó pista.";
- }
+  });
+  const data2 = await r2.json();
+  return data2.hint || "No se generó pista.";
+}
 
 
 
@@ -829,8 +829,8 @@ export default function QuizPlay(props) {
 
       // Determinar tipo de error para mensaje apropiado
       const isNetworkError = error.message.includes('Failed to fetch') ||
-                            error.message.includes('Network') ||
-                            !navigator.onLine;
+        error.message.includes('Network') ||
+        !navigator.onLine;
 
       Swal.fire({
         toast: true,
@@ -1023,12 +1023,12 @@ export default function QuizPlay(props) {
           const feedbackText = isNowMarked
             ? `Pregunta ${target + 1} marcada para repasar más tarde`
             : `Pregunta ${target + 1} desmarcada`;
-          await speak(feedbackText).catch(() => {});
+          await speak(feedbackText).catch(() => { });
           resetIdle(); // ADDED: QGAI-104
           recordAction('mark_question', { index: target, marked: isNowMarked }); // ADDED: QGAI-104
         } catch (e) {
           console.error('Error marking question via voice:', e);
-          try { await speak('No se pudo marcar la pregunta').catch(() => {}); } catch (e2) {}
+          try { await speak('No se pudo marcar la pregunta').catch(() => { }); } catch (e2) { }
         }
         return;
       }
@@ -1044,15 +1044,15 @@ export default function QuizPlay(props) {
         if (markedQuestions.has(target)) {
           try {
             await toggleMarkQuestion(target);
-            await speak(`Pregunta ${target + 1} desmarcada`).catch(() => {});
+            await speak(`Pregunta ${target + 1} desmarcada`).catch(() => { });
             resetIdle(); // ADDED: QGAI-104
             recordAction('unmark_question', { index: target }); // ADDED: QGAI-104
           } catch (e) {
             console.error('Error unmarking question via voice:', e);
-            try { await speak('No se pudo desmarcar la pregunta').catch(() => {}); } catch (e2) {}
+            try { await speak('No se pudo desmarcar la pregunta').catch(() => { }); } catch (e2) { }
           }
         } else {
-          try { await speak('Esta pregunta no está marcada').catch(() => {}); } catch (e) {}
+          try { await speak('Esta pregunta no está marcada').catch(() => { }); } catch (e) { }
         }
         return;
       }
@@ -1070,7 +1070,7 @@ export default function QuizPlay(props) {
         }
 
         try {
-          await speak(feedbackText).catch(() => {});
+          await speak(feedbackText).catch(() => { });
           resetIdle(); // ADDED: QGAI-104
           recordAction('list_marked', { count }); // ADDED: QGAI-104
         } catch (e) {
@@ -1083,20 +1083,20 @@ export default function QuizPlay(props) {
       if (/generate_review|repasar|repaso|generar.*repaso|crear.*repaso/.test(intent) && /marcadas?|favoritas?/.test(text)) {
         if (!savedQuizId) {
           try {
-            await speak('Debes guardar el quiz primero para poder generar un repaso').catch(() => {});
-          } catch (e) {}
+            await speak('Debes guardar el quiz primero para poder generar un repaso').catch(() => { });
+          } catch (e) { }
           return;
         }
 
         if (markedQuestions.size === 0) {
           try {
-            await speak('No tienes preguntas marcadas. Marca algunas preguntas primero con "marcar pregunta"').catch(() => {});
-          } catch (e) {}
+            await speak('No tienes preguntas marcadas. Marca algunas preguntas primero con "marcar pregunta"').catch(() => { });
+          } catch (e) { }
           return;
         }
 
         try {
-          await speak(`Generando quiz de repaso con ${markedQuestions.size} preguntas marcadas. Esto puede tomar unos momentos.`).catch(() => {});
+          await speak(`Generando quiz de repaso con ${markedQuestions.size} preguntas marcadas. Esto puede tomar unos momentos.`).catch(() => { });
 
           const response = await fetch(`${API_BASE}/saved-quizzes/${savedQuizId}/create-review/`, {
             method: 'POST',
@@ -1109,7 +1109,7 @@ export default function QuizPlay(props) {
             throw new Error(data.error || 'Error al generar repaso');
           }
 
-          await speak('Quiz de repaso generado exitosamente. Navegando al nuevo quiz.').catch(() => {});
+          await speak('Quiz de repaso generado exitosamente. Navegando al nuevo quiz.').catch(() => { });
 
           // Navegar al nuevo quiz de repaso
           navigate(`/quiz/review-${data.session_id}`, {
@@ -1128,8 +1128,8 @@ export default function QuizPlay(props) {
         } catch (e) {
           console.error('Error generating review quiz via voice:', e);
           try {
-            await speak('Error al generar el quiz de repaso. Intenta de nuevo más tarde.').catch(() => {});
-          } catch (e2) {}
+            await speak('Error al generar el quiz de repaso. Intenta de nuevo más tarde.').catch(() => { });
+          } catch (e2) { }
         }
         return;
       }
@@ -1137,7 +1137,7 @@ export default function QuizPlay(props) {
       // Navegar a siguiente pregunta marcada
       if (/goto_next_marked|siguiente.*marcada|próxima.*marcada/.test(intent) || (/siguiente|próxima/.test(text) && /marcada|favorita/.test(text))) {
         if (markedQuestions.size === 0) {
-          try { await speak('No tienes preguntas marcadas').catch(() => {}); } catch (e) {}
+          try { await speak('No tienes preguntas marcadas').catch(() => { }); } catch (e) { }
           return;
         }
 
@@ -1148,19 +1148,19 @@ export default function QuizPlay(props) {
         if (nextMarked !== undefined) {
           setCurrentQuestionIndex(nextMarked);
           try {
-            await speak(`Pregunta ${nextMarked + 1}`).catch(() => {});
+            await speak(`Pregunta ${nextMarked + 1}`).catch(() => { });
             resetIdle(); // ADDED: QGAI-104
             recordAction('goto_next_marked', { index: nextMarked }); // ADDED: QGAI-104
-          } catch (e) {}
+          } catch (e) { }
         } else {
           // No hay siguiente, volver a la primera marcada
           const firstMarked = markedArray[0];
           setCurrentQuestionIndex(firstMarked);
           try {
-            await speak(`No hay más preguntas marcadas adelante. Volviendo a la primera pregunta marcada, número ${firstMarked + 1}`).catch(() => {});
+            await speak(`No hay más preguntas marcadas adelante. Volviendo a la primera pregunta marcada, número ${firstMarked + 1}`).catch(() => { });
             resetIdle(); // ADDED: QGAI-104
             recordAction('goto_next_marked', { index: firstMarked, wrapped: true }); // ADDED: QGAI-104
-          } catch (e) {}
+          } catch (e) { }
         }
         return;
       }
@@ -1168,7 +1168,7 @@ export default function QuizPlay(props) {
       // Navegar a anterior pregunta marcada
       if (/goto_prev_marked|anterior.*marcada/.test(intent) || (/anterior/.test(text) && /marcada|favorita/.test(text))) {
         if (markedQuestions.size === 0) {
-          try { await speak('No tienes preguntas marcadas').catch(() => {}); } catch (e) {}
+          try { await speak('No tienes preguntas marcadas').catch(() => { }); } catch (e) { }
           return;
         }
 
@@ -1179,19 +1179,19 @@ export default function QuizPlay(props) {
         if (prevMarked !== undefined) {
           setCurrentQuestionIndex(prevMarked);
           try {
-            await speak(`Pregunta ${prevMarked + 1}`).catch(() => {});
+            await speak(`Pregunta ${prevMarked + 1}`).catch(() => { });
             resetIdle(); // ADDED: QGAI-104
             recordAction('goto_prev_marked', { index: prevMarked }); // ADDED: QGAI-104
-          } catch (e) {}
+          } catch (e) { }
         } else {
           // No hay anterior, ir a la última marcada
           const lastMarked = markedArray[0]; // ya está reversed
           setCurrentQuestionIndex(lastMarked);
           try {
-            await speak(`No hay preguntas marcadas anteriores. Yendo a la última pregunta marcada, número ${lastMarked + 1}`).catch(() => {});
+            await speak(`No hay preguntas marcadas anteriores. Yendo a la última pregunta marcada, número ${lastMarked + 1}`).catch(() => { });
             resetIdle(); // ADDED: QGAI-104
             recordAction('goto_prev_marked', { index: lastMarked, wrapped: true }); // ADDED: QGAI-104
-          } catch (e) {}
+          } catch (e) { }
         }
         return;
       }
@@ -1262,9 +1262,10 @@ export default function QuizPlay(props) {
     return () => window.removeEventListener('voice:intent', handler);
   }, [questions, currentQuestionIndex, answers, submitted, regenDrafts, speak, markedQuestions, savedQuizId, navigate, toggleMarkQuestion, resetIdle, recordAction]);
 
-  useEffect(() => {if (!voiceHint) return;
-   setHints((prev) => ({ ...prev, [currentQuestionIndex]: voiceHint }));
-}, [voiceHint, currentQuestionIndex]);
+  useEffect(() => {
+    if (!voiceHint) return;
+    setHints((prev) => ({ ...prev, [currentQuestionIndex]: voiceHint }));
+  }, [voiceHint, currentQuestionIndex]);
 
 
   const leerPreguntaActual = async () => {
@@ -1470,6 +1471,226 @@ export default function QuizPlay(props) {
         clone.options = shuffled;
       }
       return clone;
+    }
+  };
+
+  // =================== 🔊 MODO MANOS LIBRES OPTIMIZADO (SIN SUPERPOSICIÓN) ===================
+
+  let handsFreeAbort = false;
+  let currentSpeechSynthesis = null; // Para cancelar síntesis en curso
+
+  const startHandsFreeMode = async () => {
+    try {
+      if (handsFreeAbort) handsFreeAbort = false;
+
+      Swal.fire({
+        title: "🎧 Modo manos libres",
+        html: "Se leerán las preguntas y podrás responder por voz.",
+        timer: 2500,
+        showConfirmButton: false,
+      });
+
+      const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      // 🔈 función de habla segura CON ESPERA REAL
+      const safeSpeak = async (text, opts = {}) => {
+        if (!text || handsFreeAbort) return;
+
+        // Cancelar cualquier síntesis anterior
+        if (currentSpeechSynthesis) {
+          window.speechSynthesis.cancel();
+          currentSpeechSynthesis = null;
+          await pause(100);
+        }
+
+        return new Promise(async (resolve) => {
+          try {
+            const utterance = new SpeechSynthesisUtterance(text);
+
+            // Configurar voz
+            const voices = window.speechSynthesis.getVoices();
+            const voice = voices.find(v => v.lang.startsWith('es')) || voices[0];
+            if (voice) utterance.voice = voice;
+
+            utterance.lang = opts.voice?.includes('es') ? 'es-ES' : 'es';
+            utterance.rate = opts.rate || 1.0;
+            utterance.pitch = opts.pitch || 1.0;
+
+            currentSpeechSynthesis = utterance;
+
+            utterance.onend = () => {
+              currentSpeechSynthesis = null;
+              setTimeout(resolve, 300); // Pausa adicional después de cada frase
+            };
+
+            utterance.onerror = (err) => {
+              console.warn("[safeSpeak] Error TTS:", err);
+              currentSpeechSynthesis = null;
+              resolve();
+            };
+
+            // Si se aborta mientras habla
+            if (handsFreeAbort) {
+              window.speechSynthesis.cancel();
+              resolve();
+              return;
+            }
+
+            window.speechSynthesis.speak(utterance);
+
+          } catch (err) {
+            console.warn("[safeSpeak] Error TTS:", err.message);
+            currentSpeechSynthesis = null;
+            resolve();
+          }
+        });
+      };
+
+      // 🛑 detener todo
+      const stopHandsFree = async (fromVoice = false) => {
+        handsFreeAbort = true;
+        window.speechSynthesis.cancel();
+        currentSpeechSynthesis = null;
+
+        if (fromVoice) {
+          await pause(200);
+          await safeSpeak("Modo manos libres detenido.");
+        }
+
+        Swal.fire("🛑 Modo manos libres detenido", "", "info");
+        console.log("[HandsFree] Detenido manualmente");
+      };
+
+      const detectStopCommand = (said) => {
+        const lower = said.toLowerCase();
+        return ["stop", "detener", "salir", "terminar", "cancelar"].some((cmd) =>
+          lower.includes(cmd)
+        );
+      };
+
+      for (let idx = 0; idx < questions.length; idx++) {
+        if (handsFreeAbort) break;
+        const q = questions[idx];
+        if (!q) continue;
+
+        const textoPregunta = q.options?.length
+          ? `${q.question}. ${q.options.map((o, j) => `Opción ${j + 1}: ${o}`).join(". ")}`
+          : q.question;
+
+        console.log(`[HandsFree] Pregunta ${idx + 1}:`, textoPregunta);
+
+        // 🗣️ leer pregunta (ESPERA A QUE TERMINE)
+        await safeSpeak(`Pregunta ${idx + 1}. ${textoPregunta}`);
+
+        if (handsFreeAbort) break;
+
+        // 🎤 escuchar respuesta
+        let said = "";
+        try {
+          const { blob } = await recordAudioWithFallback(5);
+          if (!blob || blob.size < 2048) {
+            await safeSpeak("No escuché nada. Pasando a la siguiente pregunta.");
+            continue;
+          }
+
+          const wav = await webmToWav(blob);
+          const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
+
+          said =
+            (out &&
+              (out.text ||
+                out.transcript ||
+                out.result?.text ||
+                out.DisplayText ||
+                out.NBest?.[0]?.Lexical))?.trim() || "";
+
+          console.log(`[HandsFree] Usuario dijo: "${said}"`);
+
+          if (!said) {
+            await safeSpeak("No se entendió la respuesta. Pasando a la siguiente.");
+            continue;
+          }
+
+          if (detectStopCommand(said)) {
+            await stopHandsFree(true);
+            return;
+          }
+
+          const parsed = parseSpokenAnswer(said, q);
+          if (!parsed.ok) {
+            await safeSpeak("No entendí la respuesta. Pasando a la siguiente.");
+            continue;
+          }
+
+          if (q.type === "mcq") {
+            const letter = parsed.value.toUpperCase().replace(/[^A-D]/g, "");
+            const optIdx = letter.charCodeAt(0) - "A".charCodeAt(0);
+            handleSelectMCQ(idx, optIdx);
+            await safeSpeak(`Respuesta ${letter} registrada.`);
+          } else if (q.type === "vf") {
+            handleToggleVF(idx, parsed.value);
+            await safeSpeak(parsed.value ? "Marcado Verdadero." : "Marcado Falso.");
+          } else {
+            handleShortChange(idx, parsed.value);
+            await safeSpeak("Respuesta registrada.");
+          }
+
+          // 🧠 escucha si el usuario pide pista
+          await pause(500); // Pausa antes de escuchar pista
+          const { blob: hintBlob } = await recordAudioWithFallback(3);
+
+          if (hintBlob && hintBlob.size > 2048) {
+            const hintWav = await webmToWav(hintBlob);
+            const hintOut = await transcribeBlob(hintWav, { language: "es-ES", fmt: "wav" });
+            const hintSaid =
+              (hintOut &&
+                (hintOut.text ||
+                  hintOut.transcript ||
+                  hintOut.result?.text ||
+                  hintOut.DisplayText ||
+                  hintOut.NBest?.[0]?.Lexical))?.trim().toLowerCase() || "";
+
+            if (
+              ["pista", "dame una pista", "una pista", "ayuda", "ayúdame"].some((p) =>
+                hintSaid.includes(p)
+              )
+            ) {
+              console.log("[HandsFree] Usuario pidió pista.");
+              await ListenForHint(idx);
+            }
+          }
+
+        } catch (err) {
+          console.warn("[HandsFree] Error dictado:", err.message);
+          await safeSpeak("Hubo un problema con el micrófono. Pasando a la siguiente.");
+        }
+
+        if (handsFreeAbort) break;
+
+        // 🕒 pausa entre preguntas
+        if (idx < questions.length - 1) {
+          await safeSpeak("Siguiente pregunta en 3 segundos.");
+          await pause(1000);
+
+          for (let i = 3; i > 0 && !handsFreeAbort; i--) {
+            await safeSpeak(i.toString());
+            await pause(800); // Pausa entre cada número
+          }
+
+          await pause(500); // Pausa final antes de la siguiente pregunta
+        }
+      }
+
+      if (!handsFreeAbort) {
+        await safeSpeak("Has completado todas las preguntas del modo manos libres.");
+        Swal.fire("✅ Modo manos libres completado", "", "success");
+      }
+    } catch (err) {
+      console.error("[HandsFree] Error general:", err);
+      Swal.fire("Error en modo manos libres", err.message, "error");
+    } finally {
+      window.speechSynthesis.cancel();
+      currentSpeechSynthesis = null;
     }
   };
 
@@ -1691,6 +1912,104 @@ export default function QuizPlay(props) {
     }
   };
 
+  const ListenForHint = async (idx) => {
+    try {
+      console.log("[ListenForHint] START idx=", idx);
+
+      // 1️⃣ Graba audio
+      const { blob } = await recordAudioWithFallback(5);
+      if (!blob || blob.size < 2048) {
+        Swal.fire("No se oyó nada", "Intenta hablar más cerca del micrófono.", "info");
+        return;
+      }
+
+      // 2️⃣ Convertir a WAV y transcribir
+      const wav = await webmToWav(blob);
+      const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
+      const said =
+        (out && (out.text || out.transcript || out.result?.text || out.DisplayText || out.NBest?.[0]?.Lexical))?.trim().toLowerCase() || "";
+
+      console.log("[ListenForHint] said:", JSON.stringify(said));
+      if (!said) {
+        Swal.fire("Sin texto reconocido", "No se entendió lo que dijiste.", "info");
+        return;
+      }
+
+      // 3️⃣ Detectar si pidió una pista
+      const hintPhrases = ["dame una pista", "una pista", "necesito una pista", "ayúdame", "ayuda"];
+      const askedForHint = hintPhrases.some((p) => said.includes(p));
+      if (!askedForHint) {
+        Swal.fire("No se pidió una pista", `Dijiste: "${said}"`, "info");
+        return;
+      }
+
+      // 4️⃣ Obtener la pregunta actual
+      const q = questions[idx];
+      if (!q) {
+        Swal.fire("Error", "No se encontró la pregunta actual.", "error");
+        return;
+      }
+
+      // 5️⃣ Mostrar carga
+      Swal.fire({
+        title: "Generando pista...",
+        text: "Consultando el modelo...",
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading(),
+      });
+
+      // 6️⃣ Llamar a Django backend
+      const res = await fetch("http://localhost:8000/api/hint/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q.question }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(`Error al pedir pista: ${res.status} - ${errorData.error || 'Error desconocido'}`);
+      }
+
+      const data = await res.json();
+      const hint = data.hint || "No se pudo generar una pista.";
+
+      Swal.close();
+
+      // 7️⃣ Mostrar y leer la pista
+      Swal.fire({
+        icon: "question",
+        title: "💡 Pista",
+        html: `<p style="text-align: left; padding: 10px;">${hint}</p>`,
+      });
+
+      try {
+        await speak(`Aquí tienes una pista: ${hint}`, { voice: "es-ES-AlvaroNeural" });
+      } catch (err) {
+        console.warn("[ListenForHint] Error al hablar:", err);
+      }
+
+    } catch (e) {
+      console.error("ListenForHint error", e);
+      Swal.close(); // Cerrar el loading si hay error
+
+      const msg = (e && e.message) || "";
+      const perm = e.name === "NotAllowedError" || /permission/i.test(msg);
+      const support = /MediaRecorder|getUserMedia|not supported/i.test(msg);
+      const network = /fetch|network|hint/i.test(msg);
+
+      Swal.fire(
+        "No se pudo completar",
+        perm
+          ? "Permite el uso del micrófono en tu navegador."
+          : support
+            ? "Prueba en Chrome o Edge, o actualiza tu navegador."
+            : network
+              ? `Error de conexión con el servidor: ${msg}`
+              : `Ocurrió un error: ${msg}`,
+        "warning"
+      );
+    }
+  };
 
 
 
@@ -2320,17 +2639,17 @@ export default function QuizPlay(props) {
             {isLoadedQuiz && (
               <p className="qp-saved-info">💾 Quiz guardado - Se guarda automáticamente tu progreso</p>
             )}
-  
-          {/* Indicador de preguntas marcadas */}
-          {markedQuestions.size > 0 && (
-            <div className="qp-marked-badge">
-              <span className="qp-marked-icon">⭐</span>
-              <span className="qp-marked-count">
-                {markedQuestions.size} {markedQuestions.size === 1 ? 'pregunta marcada' : 'preguntas marcadas'} para repaso
-              </span>
-            </div>
-          )}
-        </div>
+
+            {/* Indicador de preguntas marcadas */}
+            {markedQuestions.size > 0 && (
+              <div className="qp-marked-badge">
+                <span className="qp-marked-icon">⭐</span>
+                <span className="qp-marked-count">
+                  {markedQuestions.size} {markedQuestions.size === 1 ? 'pregunta marcada' : 'preguntas marcadas'} para repaso
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Botones de acción */}
           <div className="qp-action-buttons">
@@ -2386,78 +2705,78 @@ export default function QuizPlay(props) {
 
       <section className="card">
         <div className="qp-body">
-      <AnimatePresence>
-        {questions.map((q, idx) => {
-          const draft = regenDrafts[idx];
-          const selectedLetter =
-            (answers[idx] ?? "").toString().toUpperCase().charAt(0);
+          <AnimatePresence>
+            {questions.map((q, idx) => {
+              const draft = regenDrafts[idx];
+              const selectedLetter =
+                (answers[idx] ?? "").toString().toUpperCase().charAt(0);
 
-          const isMCQ = q.type === "mcq"; // ← bandera para selección múltiple
+              const isMCQ = q.type === "mcq"; // ← bandera para selección múltiple
 
-          return (
-            <motion.div
-              key={idx}
-              className="qp-question"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-            >
-                <div className="qp-question-header">
-                <div className="qp-title">
-                  {idx + 1}. {q.question}
+              return (
+                <motion.div
+                  key={idx}
+                  className="qp-question"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <div className="qp-question-header">
+                    <div className="qp-title">
+                      {idx + 1}. {q.question}
+                    </div>
+
+                    {/* Botón de marcado prominente */}
+                    <button
+                      className={`qp-bookmark-btn ${markedQuestions.has(idx) ? 'is-marked' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleMarkQuestion(idx);
+                      }}
+                      title={markedQuestions.has(idx) ? "Desmarcar pregunta favorita" : "Marcar pregunta para repaso"}
+                      aria-label={markedQuestions.has(idx) ? "Desmarcar pregunta favorita" : "Marcar pregunta para repaso"}
+                      aria-pressed={markedQuestions.has(idx)}
+                    >
+                      <span className="qp-bookmark-icon">
+                        {markedQuestions.has(idx) ? '⭐' : '☆'}
+                      </span>
+                      <span className="qp-bookmark-text">
+                        {markedQuestions.has(idx) ? 'Marcada para repasar' : 'Marcar para repasar'}
+                      </span>
+                    </button>
                   </div>
 
-                  {/* Botón de marcado prominente */}
-                  <button
-                    className={`qp-bookmark-btn ${markedQuestions.has(idx) ? 'is-marked' : ''}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMarkQuestion(idx);
-                    }}
-                    title={markedQuestions.has(idx) ? "Desmarcar pregunta favorita" : "Marcar pregunta para repaso"}
-                    aria-label={markedQuestions.has(idx) ? "Desmarcar pregunta favorita" : "Marcar pregunta para repaso"}
-                    aria-pressed={markedQuestions.has(idx)}
-                  >
-                    <span className="qp-bookmark-icon">
-                      {markedQuestions.has(idx) ? '⭐' : '☆'}
-                    </span>
-                    <span className="qp-bookmark-text">
-                      {markedQuestions.has(idx) ? 'Marcada para repasar' : 'Marcar para repasar'}
-                    </span>
-                  </button>
-              </div>
-
-              {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
-              <div className="qp-voice-row">
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => toggleVoice(idx)}
-                  title="Controles de voz"
-                >
-                  🎤 Voz {voiceOpen[idx] ? "▴" : "▾"}
-                </button>
-
-                {voiceOpen[idx] && (
-                  <div className="qp-voice-panel">
-                    <button className="btn btn-indigo" onClick={() => readQuestion(idx)}>
-                      🔊 Leer
-                    </button>
-
-                    {/* Dictar: desactivado si NO es MCQ */}
+                  {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
+                  <div className="qp-voice-row">
                     <button
-                      className="btn btn-green-outline"
-                      type="button"
-                      disabled={!isMCQ}
-                      onClick={() => { if (isMCQ) dictateForQuestion(idx); }}
-                      title={isMCQ ? "Dictar respuesta para esta pregunta" : "Disponible solo para selección múltiple"}
+                      className="btn btn-ghost"
+                      onClick={() => toggleVoice(idx)}
+                      title="Controles de voz"
                     >
-                      🎙️ Dictar esta
+                      🎤 Voz {voiceOpen[idx] ? "▴" : "▾"}
                     </button>
 
-                    {/* Pista: SOLO visible en MCQ */}
-                    {isMCQ && (
-                      <>
-                        {/* <button
+                    {voiceOpen[idx] && (
+                      <div className="qp-voice-panel">
+                        <button className="btn btn-indigo" onClick={() => readQuestion(idx)}>
+                          🔊 Leer
+                        </button>
+
+                        {/* Dictar: desactivado si NO es MCQ */}
+                        <button
+                          className="btn btn-green-outline"
+                          type="button"
+                          disabled={!isMCQ}
+                          onClick={() => { if (isMCQ) dictateForQuestion(idx); }}
+                          title={isMCQ ? "Dictar respuesta para esta pregunta" : "Disponible solo para selección múltiple"}
+                        >
+                          🎙️ Dictar esta
+                        </button>
+
+                        {/* Pista: SOLO visible en MCQ */}
+                        {isMCQ && (
+                          <>
+                            {/* <button
                           className="btn btn-purple-outline"
                           type="button"
                           onClick={() => startListening()}
@@ -2466,196 +2785,204 @@ export default function QuizPlay(props) {
                           💡 Pista por voz {listening ? " (escuchando…)" : ""}
                         </button> */}
 
+                            <button
+                              className="btn btn-purple"
+                              type="button"
+                              onClick={() => requestHintForQuestion(idx)}
+                              title="Pedir pista (clic)"
+                            >
+                              💡 Pista
+                            </button>
+                            <button
+                              className="btn btn-purple"
+                              type="button"
+                              onClick={startHandsFreeMode}
+                              title="Modo manos libres"
+                            >
+                              🎧 Modo manos libres
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bloque visual de la pista: SOLO en MCQ */}
+                  {isMCQ && hints[idx] && (
+                    <div className="qp-hint" style={{ marginTop: 8 }}>
+                      <b>💡 Pista:</b> {hints[idx]}
+                    </div>
+                  )}
+
+                  {/* MCQ */}
+                  {q.type === "mcq" && Array.isArray(q.options) && (
+                    <div className="qp-options">
+                      {q.options.map((opt, i) => {
+                        const letter = String.fromCharCode("A".charCodeAt(0) + i);
+                        const selected = selectedLetter === letter;
+                        return (
+                          <label
+                            key={i}
+                            className={`qp-option ${selected ? "is-selected" : ""}`}
+                            onClick={() => handleSelectMCQ(idx, i)}
+                          >
+                            <span className="qp-badge">{letter}</span>
+                            <span className="qp-text">
+                              {opt.replace(/^[A-D]\)\s*/i, "")}
+                            </span>
+                            <input
+                              type="radio"
+                              name={`q${idx}`}
+                              className="qp-radio"
+                              checked={selected}
+                              readOnly
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* V/F */}
+                  {q.type === "vf" && (
+                    <div className="qp-options" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                      <label
+                        className={`qp-option ${answers[idx] === true ? "is-selected" : ""}`}
+                        onClick={() => handleToggleVF(idx, true)}
+                      >
+                        <span className="qp-text">Verdadero</span>
+                        <input
+                          type="radio"
+                          name={`q${idx}-vf`}
+                          className="qp-radio"
+                          checked={answers[idx] === true}
+                          readOnly
+                        />
+                      </label>
+                      <label
+                        className={`qp-option ${answers[idx] === false ? "is-selected" : ""}`}
+                        onClick={() => handleToggleVF(idx, false)}
+                      >
+                        <span className="qp-text">Falso</span>
+                        <input
+                          type="radio"
+                          name={`q${idx}-vf`}
+                          className="qp-radio"
+                          checked={answers[idx] === false}
+                          readOnly
+                        />
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Respuesta corta */}
+                  {q.type === "short" && (
+                    <textarea
+                      rows={3}
+                      className="qp-short"
+                      placeholder="Escribe tu respuesta..."
+                      value={answers[idx] || ""}
+                      onChange={(e) => handleShortChange(idx, e.target.value)}
+                    />
+                  )}
+
+                  {/* Acciones por pregunta */}
+                  <div className="qp-actions">
+                    <button
+                      className="btn btn-yellow"
+                      onClick={() => handleDuplicateQuestion(idx)}
+                      title="Duplicar esta pregunta"
+                    >
+                      📄 Duplicar
+                    </button>
+
+                    <button
+                      className="btn btn-red"
+                      onClick={() => handleDeleteQuestion(idx)}
+                      title="Eliminar esta pregunta"
+                    >
+                      🗑️ Eliminar
+                    </button>
+
+                    {!draft ? (
+                      <button
+                        className="btn btn-indigo"
+                        onClick={() => handleStartRegenerate(idx)}
+                        title="Regenerar esta pregunta"
+                      >
+                        🔄 Regenerar
+                      </button>
+                    ) : (
+                      <>
+                        <span className="qp-regen-note">Nueva variante lista</span>
                         <button
-                          className="btn btn-purple"
-                          type="button"
-                          onClick={() => requestHintForQuestion(idx)}
-                          title="Pedir pista (clic)"
+                          className="btn btn-black"
+                          onClick={() => handleRegenerateAgain(idx)}
                         >
-                          💡 Pista
+                          Regenerar de nuevo
+                        </button>
+                        <button
+                          className="btn btn-green"
+                          onClick={() => handleConfirmReplace(idx)}
+                        >
+                          Reemplazar
+                        </button>
+                        <button
+                          className="btn btn-red"
+                          onClick={() => handleCancelRegenerate(idx)}
+                        >
+                          Cancelar
                         </button>
                       </>
                     )}
                   </div>
-                )}
-              </div>
 
-              {/* Bloque visual de la pista: SOLO en MCQ */}
-              {isMCQ && hints[idx] && (
-                <div className="qp-hint" style={{ marginTop: 8 }}>
-                  <b>💡 Pista:</b> {hints[idx]}
-                </div>
-              )}
-
-              {/* MCQ */}
-              {q.type === "mcq" && Array.isArray(q.options) && (
-                <div className="qp-options">
-                  {q.options.map((opt, i) => {
-                    const letter = String.fromCharCode("A".charCodeAt(0) + i);
-                    const selected = selectedLetter === letter;
-                    return (
-                      <label
-                        key={i}
-                        className={`qp-option ${selected ? "is-selected" : ""}`}
-                        onClick={() => handleSelectMCQ(idx, i)}
-                      >
-                        <span className="qp-badge">{letter}</span>
-                        <span className="qp-text">
-                          {opt.replace(/^[A-D]\)\s*/i, "")}
-                        </span>
-                        <input
-                          type="radio"
-                          name={`q${idx}`}
-                          className="qp-radio"
-                          checked={selected}
-                          readOnly
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* V/F */}
-              {q.type === "vf" && (
-                <div className="qp-options" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                  <label
-                    className={`qp-option ${answers[idx] === true ? "is-selected" : ""}`}
-                    onClick={() => handleToggleVF(idx, true)}
-                  >
-                    <span className="qp-text">Verdadero</span>
-                    <input
-                      type="radio"
-                      name={`q${idx}-vf`}
-                      className="qp-radio"
-                      checked={answers[idx] === true}
-                      readOnly
-                    />
-                  </label>
-                  <label
-                    className={`qp-option ${answers[idx] === false ? "is-selected" : ""}`}
-                    onClick={() => handleToggleVF(idx, false)}
-                  >
-                    <span className="qp-text">Falso</span>
-                    <input
-                      type="radio"
-                      name={`q${idx}-vf`}
-                      className="qp-radio"
-                      checked={answers[idx] === false}
-                      readOnly
-                    />
-                  </label>
-                </div>
-              )}
-
-              {/* Respuesta corta */}
-              {q.type === "short" && (
-                <textarea
-                  rows={3}
-                  className="qp-short"
-                  placeholder="Escribe tu respuesta..."
-                  value={answers[idx] || ""}
-                  onChange={(e) => handleShortChange(idx, e.target.value)}
-                />
-              )}
-
-              {/* Acciones por pregunta */}
-              <div className="qp-actions">
-                <button
-                  className="btn btn-yellow"
-                  onClick={() => handleDuplicateQuestion(idx)}
-                  title="Duplicar esta pregunta"
-                >
-                  📄 Duplicar
-                </button>
-
-                <button
-                  className="btn btn-red"
-                  onClick={() => handleDeleteQuestion(idx)}
-                  title="Eliminar esta pregunta"
-                >
-                  🗑️ Eliminar
-                </button>
-
-                {!draft ? (
-                  <button
-                    className="btn btn-indigo"
-                    onClick={() => handleStartRegenerate(idx)}
-                    title="Regenerar esta pregunta"
-                  >
-                    🔄 Regenerar
-                  </button>
-                ) : (
-                  <>
-                    <span className="qp-regen-note">Nueva variante lista</span>
-                    <button
-                      className="btn btn-black"
-                      onClick={() => handleRegenerateAgain(idx)}
-                    >
-                      Regenerar de nuevo
-                    </button>
-                    <button
-                      className="btn btn-green"
-                      onClick={() => handleConfirmReplace(idx)}
-                    >
-                      Reemplazar
-                    </button>
-                    <button
-                      className="btn btn-red"
-                      onClick={() => handleCancelRegenerate(idx)}
-                    >
-                      Cancelar
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Panel de borrador (vista previa de la variante) */}
-              {draft && (
-                <div className="qp-regen">
-                  <div className="qp-regen__title">Vista previa de variante</div>
-                  <div className="qp-regen__q">{draft.question}</div>
-                  {Array.isArray(draft.options) && (
-                    <ul className="qp-regen__list">
-                      {draft.options.map((o, i) => (
-                        <li key={i}>{o}</li>
-                      ))}
-                    </ul>
+                  {/* Panel de borrador (vista previa de la variante) */}
+                  {draft && (
+                    <div className="qp-regen">
+                      <div className="qp-regen__title">Vista previa de variante</div>
+                      <div className="qp-regen__q">{draft.question}</div>
+                      {Array.isArray(draft.options) && (
+                        <ul className="qp-regen__list">
+                          {draft.options.map((o, i) => (
+                            <li key={i}>{o}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {draft.explanation && (
+                        <div className="qp-regen__expl">💡 {draft.explanation}</div>
+                      )}
+                    </div>
                   )}
-                  {draft.explanation && (
-                    <div className="qp-regen__expl">💡 {draft.explanation}</div>
+
+                  {/* Solución al enviar */}
+                  {submitted && (
+                    <div className="qp-solution">
+                      <div className="qp-expected">
+                        <b>Respuesta esperada:</b>{" "}
+                        {q.type === "vf" ? q.answer : q.type === "mcq" ? q.answer : q.answer}
+                      </div>
+                      {q.explanation && <div className="qp-expl">💡 {q.explanation}</div>}
+                    </div>
                   )}
-                </div>
-              )}
 
-              {/* Solución al enviar */}
-              {submitted && (
-                <div className="qp-solution">
-                  <div className="qp-expected">
-                    <b>Respuesta esperada:</b>{" "}
-                    {q.type === "vf" ? q.answer : q.type === "mcq" ? q.answer : q.answer}
-                  </div>
-                  {q.explanation && <div className="qp-expl">💡 {q.explanation}</div>}
-                </div>
-              )}
-
-              {/* Historial */}
-              {Array.isArray(history[idx]) && history[idx].length > 1 && (
-                <details className="qp-history">
-                  <summary>Ver historial ({history[idx].length} versiones)</summary>
-                  <ol>
-                    {history[idx].map((v, vi) => (
-                      <li key={vi}>
-                        <b>v{vi}:</b> {v.question}
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-              )}
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
+                  {/* Historial */}
+                  {Array.isArray(history[idx]) && history[idx].length > 1 && (
+                    <details className="qp-history">
+                      <summary>Ver historial ({history[idx].length} versiones)</summary>
+                      <ol>
+                        {history[idx].map((v, vi) => (
+                          <li key={vi}>
+                            <b>v{vi}:</b> {v.question}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
 
 
         </div>
