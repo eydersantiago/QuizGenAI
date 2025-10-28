@@ -7,7 +7,8 @@ from .views_tts import voice_token, tts_synthesize
 from .views_stt import stt_recognize
 from .views_speech import speech_token
 from .views_saved_quizzes import (
-    saved_quizzes, saved_quiz_detail, load_saved_quiz, quiz_statistics
+    saved_quizzes, saved_quiz_detail, load_saved_quiz, quiz_statistics,
+    toggle_favorite_question, generate_review_quiz
 )
 from .views_intent_router import (
     intent_health,
@@ -46,9 +47,13 @@ urlpatterns = [
 
     # Cuestionarios guardados (nueva funcionalidad)
     path("saved-quizzes/", saved_quizzes, name="saved_quizzes"),
+    path("saved-quizzes/statistics/", quiz_statistics, name="quiz_statistics"),
     path("saved-quizzes/<uuid:quiz_id>/", saved_quiz_detail, name="saved_quiz_detail"),
     path("saved-quizzes/<uuid:quiz_id>/load/", load_saved_quiz, name="load_saved_quiz"),
-    path("saved-quizzes/statistics/", quiz_statistics, name="quiz_statistics"),
+
+    path("saved-quizzes/<uuid:quiz_id>/toggle-mark/", toggle_favorite_question, name="saved_quiz_toggle_mark"),
+
+    path("saved-quizzes/<uuid:quiz_id>/create-review/", generate_review_quiz, name="saved_quiz_create_review"),
 
     #Para TTS y STT con Azure
     path("voice/token/", voice_token, name="voice_token"),

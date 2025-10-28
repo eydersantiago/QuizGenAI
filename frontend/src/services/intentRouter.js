@@ -175,6 +175,26 @@ class IntentRouterService {
     // Patrones básicos locales (más sinónimos y variantes)
     // Nota: el orden prioriza patrones más específicos primero
     const patterns = {
+      // ========== MARCADO DE PREGUNTAS (NUEVO) ==========
+      // Marcar pregunta actual
+      mark_question: /\b(marca?r?|marcar|marca|guardame|guardar|guarda|agregar?|agrega|añade|añadir|favorita?|importante|recordar)\b.*\b(pregunta|esta|ésta|actual|favorita|favoritas)\b|\b(pregunta\s+favorita|añadir\s+favorita|guardar\s+pregunta|marcar\s+como\s+favorita)\b/,
+
+      // Desmarcar pregunta
+      unmark_question: /\b(desmarcar|desmarca|quitar\s+marca|remover\s+marca|quitar|eliminar\s+marca|ya\s+no|borrar\s+marca)\b.*\b(pregunta|marca|favorita|esta)\b|\b(no\s+favorita|quitar\s+de\s+favoritas)\b/,
+
+      // Listar preguntas marcadas
+      list_marked: /\b(cu[aá]ntas|cuantas|cu[áa]ntas\s+preguntas|cuantos|cu[áa]ntos|lista|listar|mostrar|ver|dime|cuales|cu[áa]les)\b.*\b(marcadas?|favoritas?|guardadas?|importantes?)\b|\b(preguntas\s+marcadas|marcadas\s+hay|tengo\s+marcadas)\b/,
+
+      // Generar quiz de repaso
+      generate_review: /\b(repasar|repasa|repaso|generar?\s+repaso|genera\s+repaso|crear?\s+repaso|crea\s+repaso|revisar|practicar)\b.*\b(marcadas?|favoritas?|guardadas?|importantes?)\b|\b(quiz\s+de\s+repaso|cuestionario\s+de\s+repaso|repasar\s+favoritas)\b/,
+
+      // Navegar a siguiente pregunta marcada
+      goto_next_marked: /\b(siguiente|próxima?|ir\s+a\s+la?\s+siguiente|pasar\s+a\s+la?\s+siguiente)\b.*\b(marcada|favorita|guardada|importante)\b|\b(pregunta\s+marcada\s+siguiente)\b/,
+
+      // Navegar a anterior pregunta marcada
+      goto_prev_marked: /\b(anterior|volver\s+a\s+la?\s+anterior|ir\s+a\s+la?\s+anterior)\b.*\b(marcada|favorita|guardada|importante)\b|\b(pregunta\s+marcada\s+anterior)\b/,
+
+      // ========== COMANDOS EXISTENTES ==========
       // Destructivas / estructurales
       delete_question: /\b(eliminar|borra?r?|borrar|quitar|suprimir|sacar|remover|quita)\b/,
       duplicate_question: /\b(duplicar|clonar|copiar|haz\s+una\s+copia|duplicame|duplicar\s+pregunta)\b/,
