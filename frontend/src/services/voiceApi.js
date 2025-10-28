@@ -6,7 +6,23 @@ export async function ttsSpeak({ text, voice="es-ES-AlvaroNeural", format="audio
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, voice, format, session_id: sessionId }),
   });
-  if (!res.ok) throw new Error(`TTS failed: ${res.status}`);
+  if (!res.ok) {
+    // try to parse JSON or text body for better error messages
+    let bodyText = null;
+    try {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const j = await res.json(); bodyText = JSON.stringify(j);
+      } else {
+        bodyText = await res.text();
+      }
+    } catch (e) {
+      bodyText = `<unable to read response body: ${e.message}>`;
+    }
+    const msg = `TTS failed: ${res.status} ${bodyText ? '- ' + bodyText : ''}`;
+    console.error('[voiceApi] ttsSpeak error', msg);
+    throw new Error(msg);
+  }
   return await res.blob(); // audio
 }
 

@@ -115,6 +115,9 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
   const [listening, setListening] = useState(false);
   const [partial, setPartial] = useState("");
   const [finalText, setFinalText] = useState("");
+  const [lastIntentResult, setLastIntentResult] = useState(null);
+  const [confirmingIntent, setConfirmingIntent] = useState(null);
+  const [confirmListening, setConfirmListening] = useState(false);
 
   
   const startSTT = async () => {
@@ -127,8 +130,8 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
         onPartial: setPartial,
         onFinal: (text) => {
           setFinalText(text);
-          // opcional: rutear intención aquí
-          // intentRouter.parseIntent(text).then(res => { setTestResult(res); onCommand?.(res); });
+          // procesar intención al recibir resultado final del STT
+          try { processTranscribedText(text); } catch (e) { console.error('processTranscribedText error', e); }
         },
         onLevel: setVU,               // <-- aquí el fix
         onError: (e) => console.error("Azure STT error", e),
@@ -142,6 +145,7 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
         const wav = await ensureWavBlob(blob);
         const out = await transcribeBlob(wav, { language: "es-ES", fmt: "wav" });
         setFinalText(out?.text || "");
+        try { await processTranscribedText(out?.text || ""); } catch (e) { console.error('processTranscribedText error', e); }
       } catch (e2) {
         console.error("Fallback STT error:", e2);
         alert("No se pudo usar reconocimiento de voz.");
@@ -229,6 +233,7 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
         return;
       }
       console.log("STT out:", out);
+      try { await processTranscribedText(said); } catch (e) { console.error('processTranscribedText error', e); }
     } catch (e) {
       console.error("STT error", e);
       setListening(false);
@@ -244,6 +249,75 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
         alert("No se pudo grabar audio en este navegador. Revisa permisos o prueba en Chrome/Edge.");
       }
     }
+  };
+
+  // Escucha corta para confirmaciones (verbal)
+  const listenForConfirmation = async (seconds = 4) => {
+    setConfirmListening(true);
+    try {
+      // pedimos grabación corta (usa fallback utilitario)
+      const { blob, fmt } = await recordAudioWithFallback(seconds);
+      const wav = await ensureWavBlob(blob);
+      const out = await transcribeBlob(wav, { language: 'es-ES', fmt: 'wav' });
+      const text = (out && (out.text || out.transcript || out.result?.text))?.trim() || '';
+      return text;
+    } catch (e) {
+      console.error('listenForConfirmation error', e);
+      return '';
+    } finally {
+      setConfirmListening(false);
+    }
+  };
+
+  // Procesa el texto transcrito: parsea intent, muestra feedback, habla confirmaciones si aplica
+  const processTranscribedText = async (text) => {
+    if (!text || !text.trim()) return;
+    const said = text.trim();
+    // mostrar texto final
+    setFinalText(said);
+    // obtener intent
+    let result = null;
+    try {
+      result = await intentRouter.parseIntent(said);
+    } catch (e) {
+      console.error('parseIntent failed', e);
+      result = { intent: 'unknown', confidence: 0, slots: {} };
+    }
+    setLastIntentResult(result);
+
+  // Decide si requiere confirmación verbal
+  // Nota: para cumplir la preferencia de no pedir confirmaciones verbales,
+  // dejamos un flag local que puede activarse si se quiere mantener la confirmación.
+  const REQUIRE_VERBAL_CONFIRMATION = false; // <-- cambiar a true si se desea reactivar
+  const maybeDestructive = /(export|delete|borrar|eliminar|regenerar|reiniciar|reset)/i;
+  const needsConfirm = REQUIRE_VERBAL_CONFIRMATION && (maybeDestructive.test(result.intent) || maybeDestructive.test(said));
+
+    // Mensaje visual y hablado de lo reconocido
+    const human = `He entendido: ${result.intent}${result.slots && Object.keys(result.slots).length ? ' — ' + JSON.stringify(result.slots) : ''}`;
+    try { await speak(human); } catch (e) { console.error('speak err', e); }
+
+    if (!needsConfirm) {
+      // Acción directa: pasar al manejador padre sin confirmación verbal
+      onCommand?.(result);
+      return;
+    }
+
+    // Si llegamos aquí, pedimos confirmación verbal
+    setConfirmingIntent(result);
+    try {
+      await speak('Esta acción podría ser destructiva. Confirma con sí o no.');
+    } catch (e) { console.error(e); }
+
+    // Escuchar respuesta corta
+    const reply = await listenForConfirmation(4);
+    const yes = /^(s|si|sí|confirm|confirmar|afirmativo|vale)\b/i.test(reply || '');
+    if (yes) {
+      try { await speak('Confirmado. Ejecutando la acción.'); } catch (e) {}
+      onCommand?.(result);
+    } else {
+      try { await speak('Acción cancelada.'); } catch (e) {}
+    }
+    setConfirmingIntent(null);
   };
 
   // Probar texto -> intent
@@ -300,6 +374,37 @@ export default function VoiceCommandPanel({ sessionId, onCommand }) {
       <div style={{ margin: "8px 0 16px" }}>
         <MicMeter level={level} db={db} listening={listening} />
       </div>
+
+      {/* Visual feedback de la última intención detectada */}
+      {lastIntentResult && (
+        <div className="intent-feedback" style={{ marginBottom: 12, padding: 10, border: '1px solid var(--vp-border)', borderRadius: 8, background: 'var(--vp-card)' }}>
+          <strong>Intención detectada:</strong> <span style={{ marginLeft: 8 }}>{lastIntentResult.intent}</span>
+          <div style={{ marginTop: 6 }}>
+            <small>Confianza: {(lastIntentResult.confidence ?? 0).toFixed(2)}</small>
+            {lastIntentResult.slots && Object.keys(lastIntentResult.slots).length > 0 && (
+              <div style={{ marginTop: 6 }}><strong>Parámetros:</strong> <code>{JSON.stringify(lastIntentResult.slots)}</code></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Confirmación verbal en curso */}
+      {confirmingIntent && (
+        <div className="intent-confirm" style={{ marginBottom: 12, padding: 10, border: '1px dashed var(--vp-border)', borderRadius: 8, background: '#fff7ed' }}>
+          <div><strong>Confirmación requerida</strong></div>
+          <div style={{ marginTop: 6 }}>Se requiere confirmación verbal para: <em>{confirmingIntent.intent}</em></div>
+          <div style={{ marginTop: 8 }}>
+            <button className="btn-test" onClick={async () => {
+              // allow manual confirm (still speaks)
+              try { await speak('Confirmado manualmente.'); } catch(e){}
+              onCommand?.(confirmingIntent);
+              setConfirmingIntent(null);
+            }} disabled={confirmListening}>Confirmar (botón)</button>
+            <button className="btn-test" onClick={async () => { try { await speak('Acción cancelada manualmente'); } catch(e){}; setConfirmingIntent(null); }} style={{ marginLeft: 8 }} disabled={confirmListening}>Cancelar</button>
+            {confirmListening && <span style={{ marginLeft: 12 }}>🎧 Escuchando respuesta...</span>}
+          </div>
+        </div>
+      )}
 
         {/* Backend Health */}
         <div className="backend-health">

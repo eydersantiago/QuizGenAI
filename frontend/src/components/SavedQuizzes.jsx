@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  BookOpen, 
-  Play, 
-  Trash2, 
-  Calendar, 
-  Clock, 
-  CheckCircle, 
+import {
+  BookOpen,
+  Play,
+  Trash2,
+  Calendar,
+  Clock,
+  CheckCircle,
   ArrowLeft,
   Search,
   Filter,
   BarChart3,
-  BookmarkPlus
+  BookmarkPlus,
+  RefreshCw,
+  GitBranch  // Para indicar relación jerárquica con quiz original
 } from "lucide-react";
 import Swal from "sweetalert2";
 import "../estilos/SavedQuizzes.css";
@@ -124,7 +126,8 @@ export default function SavedQuizzes() {
               current_question: savedQuiz.current_question,
               is_completed: savedQuiz.is_completed,
               topic: savedQuiz.topic,
-              difficulty: savedQuiz.difficulty
+              difficulty: savedQuiz.difficulty,
+              favorite_questions: savedQuiz.favorite_questions || []
             }
           }
         });
@@ -164,6 +167,128 @@ export default function SavedQuizzes() {
         console.error('Error:', error);
         Swal.fire("Error", "No se pudo eliminar el cuestionario", "error");
       }
+    }
+  };
+
+  const handleGenerateReview = async (quizId, markedCount) => {
+    try {
+      // Mostrar loading
+      Swal.fire({
+        title: 'Generando quiz de repaso...',
+        html: `Creando ${markedCount} variantes de tus preguntas marcadas`,
+        allowOutsideClick: false,
+        didOpen: () => {
+          Swal.showLoading();
+        }
+      });
+
+      // Llamar al endpoint de generación de repaso
+      const response = await fetch(`${API_BASE}/saved-quizzes/${quizId}/create-review/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        // Manejar errores específicos
+        if (response.status === 400 && data.error) {
+          // Caso especial: intento de crear repaso de un repaso
+          if (data.error === 'No se puede crear repaso de un repaso' && data.original_quiz_id) {
+            const result = await Swal.fire({
+              title: 'Este ya es un quiz de repaso',
+              html: `
+                <p>${data.message}</p>
+                <p style="margin-top: 16px; font-weight: 600;">
+                  Quiz original: ${data.original_quiz_title || 'Sin título'}
+                </p>
+                <p style="margin-top: 8px; font-size: 0.9rem; color: #666;">
+                  ${data.suggestion}
+                </p>
+              `,
+              icon: 'info',
+              showCancelButton: true,
+              confirmButtonText: 'Ir al quiz original',
+              cancelButtonText: 'Cancelar',
+              confirmButtonColor: '#8b5cf6'
+            });
+
+            if (result.isConfirmed) {
+              // Navegar al quiz original para que el usuario pueda generar repaso desde ahí
+              handleLoadQuiz(data.original_quiz_id);
+            }
+            return;
+          }
+
+          if (data.error.includes('No hay preguntas marcadas') || data.error.includes('favoritas')) {
+            Swal.fire({
+              title: 'No hay preguntas marcadas',
+              text: 'Debes marcar al menos una pregunta como favorita antes de generar un quiz de repaso.',
+              icon: 'info',
+              confirmButtonText: 'Entendido'
+            });
+            return;
+          }
+        } else if (response.status === 503) {
+          Swal.fire({
+            title: 'Servicio no disponible',
+            text: 'No hay créditos disponibles en los proveedores de IA. Por favor, intenta más tarde.',
+            icon: 'warning',
+            confirmButtonText: 'Entendido'
+          });
+          return;
+        }
+
+        throw new Error(data.error || 'Error al generar quiz de repaso');
+      }
+
+      // Mostrar mensaje de éxito con detalles
+      await Swal.fire({
+        title: '¡Quiz de repaso generado!',
+        html: `
+          <div style="text-align: left;">
+            <p><strong>✓</strong> ${data.count} variantes generadas exitosamente</p>
+            <p><strong>📚</strong> Tema: ${data.topic}</p>
+            <p><strong>⚙️</strong> Dificultad: ${data.difficulty}</p>
+            <p style="margin-top: 16px; font-size: 0.9rem; color: #666;">
+              Las preguntas han sido regeneradas con variantes diferentes pero sobre los mismos conceptos.
+            </p>
+          </div>
+        `,
+        icon: 'success',
+        confirmButtonText: 'Comenzar repaso',
+        timer: 3000,
+        timerProgressBar: true
+      });
+
+      // Navegar a QuizPlay con las nuevas preguntas
+      navigate(`/quiz/review-${data.session_id}`, {
+        state: {
+          savedQuizData: {
+            quiz_id: null, // No tiene ID aún porque es nuevo
+            session_id: data.session_id,
+            title: data.topic,
+            questions: data.questions,
+            user_answers: {},
+            current_question: 0,
+            is_completed: false,
+            topic: data.topic,
+            difficulty: data.difficulty,
+            favorite_questions: [],
+            is_review: true, // Indicador de que es quiz de repaso
+            original_quiz_id: data.original_quiz_id // ID del quiz original
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Error generating review quiz:', error);
+      Swal.fire({
+        title: 'Error',
+        text: error.message || 'No se pudo generar el quiz de repaso. Por favor, intenta de nuevo.',
+        icon: 'error',
+        confirmButtonText: 'Entendido'
+      });
     }
   };
 
@@ -336,7 +461,16 @@ export default function SavedQuizzes() {
                 whileHover={{ scale: 1.02 }}
               >
                 <div className="quiz-header">
-                  <h3>{quiz.title}</h3>
+                  <div className="quiz-title-section">
+                    <h3>{quiz.title}</h3>
+                    {/* Indicador de quiz de repaso */}
+                    {quiz.is_review && quiz.original_quiz_info && (
+                      <div className="review-badge" title={`Repaso de: ${quiz.original_quiz_info.title}`}>
+                        <GitBranch size={14} />
+                        <span>Repaso</span>
+                      </div>
+                    )}
+                  </div>
                   <div className="quiz-actions">
                     <button
                       onClick={() => handleLoadQuiz(quiz.id)}
@@ -360,10 +494,10 @@ export default function SavedQuizzes() {
                     <span className="label">Tema:</span>
                     <span className="value">{quiz.topic}</span>
                   </div>
-                  
+
                   <div className="info-row">
                     <span className="label">Dificultad:</span>
-                    <span 
+                    <span
                       className="difficulty-badge"
                       style={{ backgroundColor: getDifficultyColor(quiz.difficulty) }}
                     >
@@ -371,13 +505,30 @@ export default function SavedQuizzes() {
                     </span>
                   </div>
 
+                  {/* Información del quiz original si es repaso */}
+                  {quiz.is_review && quiz.original_quiz_info && (
+                    <div className="info-row original-quiz-row">
+                      <span className="label">
+                        <GitBranch size={14} />
+                        Basado en:
+                      </span>
+                      <button
+                        className="original-quiz-link"
+                        onClick={() => handleLoadQuiz(quiz.original_quiz_info.id)}
+                        title="Ir al quiz original"
+                      >
+                        {quiz.original_quiz_info.title}
+                      </button>
+                    </div>
+                  )}
+
                   <div className="info-row">
                     <span className="label">Progreso:</span>
                     <div className="progress-info">
                       <div className="progress-bar">
-                        <div 
+                        <div
                           className="progress-fill"
-                          style={{ 
+                          style={{
                             width: `${quiz.progress_percentage}%`,
                             backgroundColor: getProgressColor(quiz.progress_percentage)
                           }}
@@ -388,7 +539,32 @@ export default function SavedQuizzes() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Indicador de preguntas marcadas */}
+                  {quiz.favorite_questions && quiz.favorite_questions.length > 0 && (
+                    <div className="info-row marked-questions-row">
+                      <span className="marked-questions-badge">
+                        <span className="marked-icon">⭐</span>
+                        <span className="marked-text">
+                          {quiz.favorite_questions.length} {quiz.favorite_questions.length === 1 ? 'pregunta marcada' : 'preguntas marcadas'}
+                        </span>
+                      </span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Botón de repaso (solo si hay preguntas marcadas Y no es un quiz de repaso) */}
+                {!quiz.is_review && quiz.favorite_questions && quiz.favorite_questions.length > 0 && (
+                  <button
+                    className="review-button"
+                    onClick={() => handleGenerateReview(quiz.id, quiz.favorite_questions.length)}
+                  >
+                    <RefreshCw size={18} />
+                    <span className="review-text">
+                      Repasar marcadas ({quiz.favorite_questions.length})
+                    </span>
+                  </button>
+                )}
 
                 <div className="quiz-footer">
                   <div className="date-info">
