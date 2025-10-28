@@ -595,6 +595,9 @@ export default function QuizPlay(props) {
   const [quizTitle, setQuizTitle] = useState("");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
+  // Estado para preguntas marcadas como favoritas
+  const [markedQuestions, setMarkedQuestions] = useState(new Set());
+
   // Referencias y estados necesarios por listeners/efectos (declarar antes de usarlos)
   // Referencia para timeout de auto-guardado
   const saveTimeoutRef = useRef(null);
@@ -609,6 +612,241 @@ export default function QuizPlay(props) {
   const [lastSuggestionTime, setLastSuggestionTime] = useState(0);
   const [showSuggestion, setShowSuggestion] = useState(false);
   // ================================================================
+
+  // ========== MOVED: QGAI-104 Configure Context Tracker BEFORE useEffect ==========
+  // UPDATED: Added recordAnswer, errorRate, totalAnswered for smarter error detection
+  // UPDATED: Idle threshold increased to 30s to be less intrusive
+  const { context, resetIdle, recordAnswer, recordAction, isIdle, errorRate, totalAnswered } = useContextTracker({
+    idleThreshold: 30000, // 30 segundos
+    quizTopic: location.state?.topic || "Quiz",
+    totalQuestions: questions.length,
+    currentQuestion: currentQuestionIndex,
+  });
+  // ================================================================
+
+  // ========== MOVED: FUNCIONALIDAD DE MARCADO DE PREGUNTAS FAVORITAS ==========
+  /**
+   * Toggle de marcado de pregunta favorita con manejo robusto de casos límite
+   *
+   * Características:
+   * - Valida índice de pregunta antes de proceder
+   * - Actualiza estado local inmediatamente para feedback instantáneo
+   * - Persiste en backend solo si el quiz está guardado
+   * - Revierte cambios locales si falla la sincronización con backend
+   * - Maneja errores de red sin interrumpir el flujo del usuario
+   *
+   * @param {number} questionIndex - Índice de la pregunta a marcar/desmarcar
+   */
+  const toggleMarkQuestion = async (questionIndex) => {
+    // ====== VALIDACIÓN 1: Índice válido ======
+    if (typeof questionIndex !== 'number' || !Number.isInteger(questionIndex)) {
+      console.error('❌ Error: questionIndex debe ser un número entero', {
+        received: questionIndex,
+        type: typeof questionIndex
+      });
+      return;
+    }
+
+    if (questionIndex < 0 || questionIndex >= questions.length) {
+      console.error('❌ Error: questionIndex fuera de rango', {
+        index: questionIndex,
+        validRange: `0-${questions.length - 1}`,
+        totalQuestions: questions.length
+      });
+
+      // Mensaje discreto al usuario sin bloquear la UI
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Índice de pregunta inválido',
+        showConfirmButton: false,
+        timer: 2000,
+        timerProgressBar: true
+      });
+      return;
+    }
+
+    // ====== PASO 1: Capturar estado anterior para rollback ======
+    const wasMarked = markedQuestions.has(questionIndex);
+
+    console.log('🔄 Toggle marcado de pregunta', {
+      questionIndex,
+      wasMarked,
+      willBe: !wasMarked,
+      savedQuizId,
+      hasQuestions: questions.length
+    });
+
+    // ====== PASO 2: Actualizar estado local inmediatamente (Optimistic UI) ======
+    setMarkedQuestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionIndex)) {
+        newSet.delete(questionIndex);
+      } else {
+        newSet.add(questionIndex);
+      }
+      return newSet;
+    });
+
+    // ====== PASO 3: Persistir en backend solo si el quiz está guardado ======
+    if (!savedQuizId) {
+      // Quiz no guardado: solo manejar en estado local
+      console.log('ℹ️ Quiz no guardado - Marcado solo en estado local', {
+        questionIndex,
+        markedCount: markedQuestions.size,
+        note: 'Se persistirá cuando el usuario guarde el quiz'
+      });
+
+      // Mensaje informativo discreto (solo primera vez)
+      if (!sessionStorage.getItem('shown_unsaved_mark_info')) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: 'Marca guardada localmente',
+          text: 'Guarda el quiz para persistir tus marcas',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
+        sessionStorage.setItem('shown_unsaved_mark_info', 'true');
+      }
+
+      return; // No continuar con llamada al backend
+    }
+
+    // ====== PASO 4: Validar que tenemos ID válido antes de hacer request ======
+    if (!savedQuizId || typeof savedQuizId !== 'string') {
+      console.error('❌ Error: savedQuizId inválido', {
+        savedQuizId,
+        type: typeof savedQuizId
+      });
+
+      // Revertir cambio local
+      setMarkedQuestions(prev => {
+        const newSet = new Set(prev);
+        if (wasMarked) {
+          newSet.add(questionIndex);
+        } else {
+          newSet.delete(questionIndex);
+        }
+        return newSet;
+      });
+
+      return;
+    }
+
+    // ====== PASO 5: Intentar persistir en backend ======
+    try {
+      console.log('📡 Enviando request al backend', {
+        url: `${API_BASE}/saved-quizzes/${savedQuizId}/toggle-mark/`,
+        questionIndex
+      });
+
+      const response = await fetch(`${API_BASE}/saved-quizzes/${savedQuizId}/toggle-mark/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question_index: questionIndex })
+      });
+
+      // Intentar parsear respuesta
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        console.error('❌ Error parseando respuesta JSON:', parseError);
+        throw new Error('Respuesta inválida del servidor');
+      }
+
+      // ====== CASO 1: Request exitoso ======
+      if (response.ok) {
+        console.log('✅ Pregunta marcada/desmarcada exitosamente', {
+          questionIndex,
+          is_favorite: data.is_favorite,
+          favorite_questions: data.favorite_questions,
+          serverResponse: data
+        });
+
+        // Opcional: Sincronizar con estado del servidor por si acaso
+        if (data.favorite_questions && Array.isArray(data.favorite_questions)) {
+          setMarkedQuestions(new Set(data.favorite_questions));
+        }
+
+        return; // Éxito completo
+      }
+
+      // ====== CASO 2: Request falló - Revertir cambio local ======
+      console.error('❌ Error del servidor al marcar pregunta', {
+        status: response.status,
+        statusText: response.statusText,
+        error: data.error,
+        questionIndex
+      });
+
+      // Revertir al estado anterior
+      setMarkedQuestions(prev => {
+        const newSet = new Set(prev);
+        if (wasMarked) {
+          newSet.add(questionIndex);
+        } else {
+          newSet.delete(questionIndex);
+        }
+        return newSet;
+      });
+
+      // Mensaje de error discreto y no bloqueante
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'No se pudo sincronizar',
+        text: data.error || 'Intenta de nuevo más tarde',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+
+    } catch (error) {
+      // ====== CASO 3: Error de red o excepción ======
+      console.error('❌ Error de red o excepción al marcar pregunta', {
+        error: error.message,
+        stack: error.stack,
+        questionIndex,
+        savedQuizId
+      });
+
+      // Revertir cambio local
+      setMarkedQuestions(prev => {
+        const newSet = new Set(prev);
+        if (wasMarked) {
+          newSet.add(questionIndex);
+        } else {
+          newSet.delete(questionIndex);
+        }
+        return newSet;
+      });
+
+      // Determinar tipo de error para mensaje apropiado
+      const isNetworkError = error.message.includes('Failed to fetch') ||
+                            error.message.includes('Network') ||
+                            !navigator.onLine;
+
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: isNetworkError ? 'Sin conexión' : 'Error',
+        text: isNetworkError
+          ? 'Verifica tu conexión a internet'
+          : 'No se pudo guardar el marcado',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+    }
+  };
+  // =====================================================================
 
   // Escuchar intents globales del widget de voz
   useEffect(() => {
@@ -771,6 +1009,194 @@ export default function QuizPlay(props) {
         return;
       }
 
+      // ========== MARCADO DE PREGUNTAS (QGAI-XXX) ==========
+      // Marcar pregunta actual como favorita
+      if (/mark_question|marca?r?|marcar/.test(intent) && /pregunta|favorita|esta|actual/.test(text)) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count');
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length)
+          ? Number(idx) - 1
+          : currentQuestionIndex;
+
+        try {
+          await toggleMarkQuestion(target);
+          const isNowMarked = markedQuestions.has(target);
+          const feedbackText = isNowMarked
+            ? `Pregunta ${target + 1} marcada para repasar más tarde`
+            : `Pregunta ${target + 1} desmarcada`;
+          await speak(feedbackText).catch(() => {});
+          resetIdle(); // ADDED: QGAI-104
+          recordAction('mark_question', { index: target, marked: isNowMarked }); // ADDED: QGAI-104
+        } catch (e) {
+          console.error('Error marking question via voice:', e);
+          try { await speak('No se pudo marcar la pregunta').catch(() => {}); } catch (e2) {}
+        }
+        return;
+      }
+
+      // Desmarcar pregunta
+      if (/unmark_question|desmarcar|desmarca/.test(intent) || /desmarcar|quitar marca|ya no|remover marca/.test(text)) {
+        const idx = getSlot(res, 'index') || getSlot(res, 'count');
+        const target = (idx && Number(idx) >= 1 && Number(idx) <= questions.length)
+          ? Number(idx) - 1
+          : currentQuestionIndex;
+
+        // Solo desmarcar si está marcada
+        if (markedQuestions.has(target)) {
+          try {
+            await toggleMarkQuestion(target);
+            await speak(`Pregunta ${target + 1} desmarcada`).catch(() => {});
+            resetIdle(); // ADDED: QGAI-104
+            recordAction('unmark_question', { index: target }); // ADDED: QGAI-104
+          } catch (e) {
+            console.error('Error unmarking question via voice:', e);
+            try { await speak('No se pudo desmarcar la pregunta').catch(() => {}); } catch (e2) {}
+          }
+        } else {
+          try { await speak('Esta pregunta no está marcada').catch(() => {}); } catch (e) {}
+        }
+        return;
+      }
+
+      // Listar preguntas marcadas
+      if (/list_marked|cu[aá]ntas|listar|mostrar/.test(intent) && /marcadas?|favoritas?|guardadas?/.test(text)) {
+        const count = markedQuestions.size;
+        let feedbackText;
+        if (count === 0) {
+          feedbackText = 'No tienes preguntas marcadas aún';
+        } else if (count === 1) {
+          feedbackText = 'Tienes 1 pregunta marcada para repasar';
+        } else {
+          feedbackText = `Tienes ${count} preguntas marcadas para repasar`;
+        }
+
+        try {
+          await speak(feedbackText).catch(() => {});
+          resetIdle(); // ADDED: QGAI-104
+          recordAction('list_marked', { count }); // ADDED: QGAI-104
+        } catch (e) {
+          console.error('Error listing marked questions via voice:', e);
+        }
+        return;
+      }
+
+      // Generar quiz de repaso con preguntas marcadas
+      if (/generate_review|repasar|repaso|generar.*repaso|crear.*repaso/.test(intent) && /marcadas?|favoritas?/.test(text)) {
+        if (!savedQuizId) {
+          try {
+            await speak('Debes guardar el quiz primero para poder generar un repaso').catch(() => {});
+          } catch (e) {}
+          return;
+        }
+
+        if (markedQuestions.size === 0) {
+          try {
+            await speak('No tienes preguntas marcadas. Marca algunas preguntas primero con "marcar pregunta"').catch(() => {});
+          } catch (e) {}
+          return;
+        }
+
+        try {
+          await speak(`Generando quiz de repaso con ${markedQuestions.size} preguntas marcadas. Esto puede tomar unos momentos.`).catch(() => {});
+
+          const response = await fetch(`${API_BASE}/saved-quizzes/${savedQuizId}/create-review/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || 'Error al generar repaso');
+          }
+
+          await speak('Quiz de repaso generado exitosamente. Navegando al nuevo quiz.').catch(() => {});
+
+          // Navegar al nuevo quiz de repaso
+          navigate(`/quiz/review-${data.session_id}`, {
+            state: {
+              savedQuizData: {
+                session_id: data.session_id,
+                questions: data.questions,
+                is_review: true,
+                original_quiz_id: data.original_quiz_id
+              }
+            }
+          });
+
+          resetIdle(); // ADDED: QGAI-104
+          recordAction('generate_review', { marked_count: markedQuestions.size, session_id: data.session_id }); // ADDED: QGAI-104
+        } catch (e) {
+          console.error('Error generating review quiz via voice:', e);
+          try {
+            await speak('Error al generar el quiz de repaso. Intenta de nuevo más tarde.').catch(() => {});
+          } catch (e2) {}
+        }
+        return;
+      }
+
+      // Navegar a siguiente pregunta marcada
+      if (/goto_next_marked|siguiente.*marcada|próxima.*marcada/.test(intent) || (/siguiente|próxima/.test(text) && /marcada|favorita/.test(text))) {
+        if (markedQuestions.size === 0) {
+          try { await speak('No tienes preguntas marcadas').catch(() => {}); } catch (e) {}
+          return;
+        }
+
+        // Encontrar la siguiente pregunta marcada después del índice actual
+        const markedArray = Array.from(markedQuestions).sort((a, b) => a - b);
+        const nextMarked = markedArray.find(idx => idx > currentQuestionIndex);
+
+        if (nextMarked !== undefined) {
+          setCurrentQuestionIndex(nextMarked);
+          try {
+            await speak(`Pregunta ${nextMarked + 1}`).catch(() => {});
+            resetIdle(); // ADDED: QGAI-104
+            recordAction('goto_next_marked', { index: nextMarked }); // ADDED: QGAI-104
+          } catch (e) {}
+        } else {
+          // No hay siguiente, volver a la primera marcada
+          const firstMarked = markedArray[0];
+          setCurrentQuestionIndex(firstMarked);
+          try {
+            await speak(`No hay más preguntas marcadas adelante. Volviendo a la primera pregunta marcada, número ${firstMarked + 1}`).catch(() => {});
+            resetIdle(); // ADDED: QGAI-104
+            recordAction('goto_next_marked', { index: firstMarked, wrapped: true }); // ADDED: QGAI-104
+          } catch (e) {}
+        }
+        return;
+      }
+
+      // Navegar a anterior pregunta marcada
+      if (/goto_prev_marked|anterior.*marcada/.test(intent) || (/anterior/.test(text) && /marcada|favorita/.test(text))) {
+        if (markedQuestions.size === 0) {
+          try { await speak('No tienes preguntas marcadas').catch(() => {}); } catch (e) {}
+          return;
+        }
+
+        // Encontrar la pregunta marcada anterior al índice actual
+        const markedArray = Array.from(markedQuestions).sort((a, b) => a - b);
+        const prevMarked = markedArray.reverse().find(idx => idx < currentQuestionIndex);
+
+        if (prevMarked !== undefined) {
+          setCurrentQuestionIndex(prevMarked);
+          try {
+            await speak(`Pregunta ${prevMarked + 1}`).catch(() => {});
+            resetIdle(); // ADDED: QGAI-104
+            recordAction('goto_prev_marked', { index: prevMarked }); // ADDED: QGAI-104
+          } catch (e) {}
+        } else {
+          // No hay anterior, ir a la última marcada
+          const lastMarked = markedArray[0]; // ya está reversed
+          setCurrentQuestionIndex(lastMarked);
+          try {
+            await speak(`No hay preguntas marcadas anteriores. Yendo a la última pregunta marcada, número ${lastMarked + 1}`).catch(() => {});
+            resetIdle(); // ADDED: QGAI-104
+            recordAction('goto_prev_marked', { index: lastMarked, wrapped: true }); // ADDED: QGAI-104
+          } catch (e) {}
+        }
+        return;
+      }
+      // ========== FIN MARCADO DE PREGUNTAS ==========
+
       // Leer pregunta
       // Explicar pregunta (solo después de enviar el quiz)
       if (/explain_question|explica|explicame|explicarle|explicar/.test(intent) || /explica|explicame|expl[ií]came|explicar/.test(text)) {
@@ -834,7 +1260,7 @@ export default function QuizPlay(props) {
 
     window.addEventListener('voice:intent', handler);
     return () => window.removeEventListener('voice:intent', handler);
-  }, [questions, currentQuestionIndex, answers, submitted, regenDrafts, speak]);
+  }, [questions, currentQuestionIndex, answers, submitted, regenDrafts, speak, markedQuestions, savedQuizId, navigate, toggleMarkQuestion, resetIdle, recordAction]);
 
   useEffect(() => {if (!voiceHint) return;
    setHints((prev) => ({ ...prev, [currentQuestionIndex]: voiceHint }));
@@ -917,6 +1343,11 @@ export default function QuizPlay(props) {
           setQuestions(savedQuizData.questions || []);
           setAnswers(savedQuizData.user_answers || {});
           setCurrentQuestionIndex(savedQuizData.current_question || 0);
+
+          // Inicializar preguntas marcadas desde el quiz guardado
+          if (savedQuizData.favorite_questions && Array.isArray(savedQuizData.favorite_questions)) {
+            setMarkedQuestions(new Set(savedQuizData.favorite_questions));
+          }
 
           // Inicializar historial
           const initHistory = {};
@@ -1142,17 +1573,6 @@ export default function QuizPlay(props) {
     }
     // ========================================================
   };
-
-  // ========== ADDED: QGAI-104 Configure Context Tracker ==========
-  // UPDATED: Added recordAnswer, errorRate, totalAnswered for smarter error detection
-  // UPDATED: Idle threshold increased to 30s to be less intrusive
-  const { context, resetIdle, recordAnswer, recordAction, isIdle, errorRate, totalAnswered } = useContextTracker({
-    idleThreshold: 30000, // 30 segundos
-    quizTopic: location.state?.topic || "Quiz",
-    totalQuestions: questions.length,
-    currentQuestion: currentQuestionIndex,
-  });
-  // ================================================================
 
   // Leer una pregunta específica
   const readQuestion = async (idx) => {
@@ -1900,7 +2320,17 @@ export default function QuizPlay(props) {
             {isLoadedQuiz && (
               <p className="qp-saved-info">💾 Quiz guardado - Se guarda automáticamente tu progreso</p>
             )}
-          </div>
+  
+          {/* Indicador de preguntas marcadas */}
+          {markedQuestions.size > 0 && (
+            <div className="qp-marked-badge">
+              <span className="qp-marked-icon">⭐</span>
+              <span className="qp-marked-count">
+                {markedQuestions.size} {markedQuestions.size === 1 ? 'pregunta marcada' : 'preguntas marcadas'} para repaso
+              </span>
+            </div>
+          )}
+        </div>
 
           {/* Botones de acción */}
           <div className="qp-action-buttons">
@@ -1972,8 +2402,29 @@ export default function QuizPlay(props) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
             >
-              <div className="qp-title">
-                {idx + 1}. {q.question}
+                <div className="qp-question-header">
+                <div className="qp-title">
+                  {idx + 1}. {q.question}
+                  </div>
+
+                  {/* Botón de marcado prominente */}
+                  <button
+                    className={`qp-bookmark-btn ${markedQuestions.has(idx) ? 'is-marked' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMarkQuestion(idx);
+                    }}
+                    title={markedQuestions.has(idx) ? "Desmarcar pregunta favorita" : "Marcar pregunta para repaso"}
+                    aria-label={markedQuestions.has(idx) ? "Desmarcar pregunta favorita" : "Marcar pregunta para repaso"}
+                    aria-pressed={markedQuestions.has(idx)}
+                  >
+                    <span className="qp-bookmark-icon">
+                      {markedQuestions.has(idx) ? '⭐' : '☆'}
+                    </span>
+                    <span className="qp-bookmark-text">
+                      {markedQuestions.has(idx) ? 'Marcada para repasar' : 'Marcar para repasar'}
+                    </span>
+                  </button>
               </div>
 
               {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
