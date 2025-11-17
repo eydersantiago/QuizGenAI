@@ -31,6 +31,8 @@ class GenerationSession(models.Model):
 
     # Último preview generado para esta sesión (persistimos para HU-05)
     latest_preview = JSONField(default=list, blank=True)
+    # Imagen de portada generada por Gemini (ruta relativa dentro de MEDIA_URL/generated)
+    cover_image = models.CharField(max_length=500, blank=True, default='', help_text="Ruta relativa a la imagen de portada generada")
 
 
     class Meta:
@@ -104,6 +106,8 @@ class SavedQuiz(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_accessed = models.DateTimeField(auto_now=True, help_text="Última vez que se accedió al cuestionario")
+    # Imagen de portada asociada al SavedQuiz (copiada desde la session al confirmar)
+    cover_image = models.CharField(max_length=500, blank=True, default='', help_text="Ruta relativa a la imagen de portada del quiz")
 
     class Meta:
         db_table = "saved_quiz"

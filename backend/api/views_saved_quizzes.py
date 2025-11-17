@@ -21,6 +21,7 @@ from .views import (
     _header_provider,
     _norm_for_cmp
 )
+from .views import generate_cover_image
 
 
 @api_view(['GET', 'POST'])
@@ -48,7 +49,7 @@ def saved_quizzes(request):
         # Ordenar por último acceso
         queryset = queryset.order_by('-last_accessed', '-updated_at')
         
-        serializer = SavedQuizListSerializer(queryset, many=True)
+        serializer = SavedQuizListSerializer(queryset, many=True, context={'request': request})
         return JsonResponse({
             'saved_quizzes': serializer.data,
             'count': queryset.count()
@@ -107,6 +108,25 @@ def saved_quizzes(request):
                 pass
 
         # Crear el cuestionario guardado
+        # Si existe session y no tiene cover_image, intentar generarla (no bloquear)
+        cover_image_rel = ''
+        if 'session' in locals() and session is not None:
+            cover_image_rel = getattr(session, 'cover_image', '') or ''
+            if not cover_image_rel:
+                try:
+                    prompt_for_image = f"{topic} - {difficulty} quiz cover"
+                    img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
+                    if img_rel:
+                        # Persistir en la session para reutilizar en futuras operaciones
+                        try:
+                            session.cover_image = img_rel
+                            session.save(update_fields=['cover_image'])
+                        except Exception:
+                            pass
+                        cover_image_rel = img_rel
+                except Exception:
+                    cover_image_rel = ''
+
         saved_quiz = SavedQuiz.objects.create(
             title=data['title'],
             topic=topic,
@@ -117,10 +137,11 @@ def saved_quizzes(request):
             questions=questions,
             user_answers=data.get('user_answers', {}),
             current_question=data.get('current_question', 0),
-            original_quiz=original_quiz  # Establecer relación jerárquica
+            original_quiz=original_quiz,  # Establecer relación jerárquica
+            cover_image=cover_image_rel
         )
         
-        serializer = SavedQuizSerializer(saved_quiz)
+        serializer = SavedQuizSerializer(saved_quiz, context={'request': request})
         return JsonResponse({
             'message': 'Cuestionario guardado exitosamente',
             'saved_quiz': serializer.data
@@ -141,7 +162,7 @@ def saved_quiz_detail(request, quiz_id):
         saved_quiz.last_accessed = timezone.now()
         saved_quiz.save(update_fields=['last_accessed'])
         
-        serializer = SavedQuizSerializer(saved_quiz)
+        serializer = SavedQuizSerializer(saved_quiz, context={'request': request})
         return JsonResponse({
             'saved_quiz': serializer.data
         }, status=200)
@@ -177,7 +198,7 @@ def saved_quiz_detail(request, quiz_id):
         
         saved_quiz.save()
         
-        serializer = SavedQuizSerializer(saved_quiz)
+        serializer = SavedQuizSerializer(saved_quiz, context={'request': request})
         return JsonResponse({
             'message': 'Progreso actualizado exitosamente',
             'saved_quiz': serializer.data
@@ -329,13 +350,13 @@ def quiz_statistics(request):
         
         # Cuestionarios más recientes
         recent_quizzes = SavedQuiz.objects.order_by('-last_accessed')[:5]
-        recent_serializer = SavedQuizListSerializer(recent_quizzes, many=True)
+        recent_serializer = SavedQuizListSerializer(recent_quizzes, many=True, context={'request': request})
         
         # Cuestionarios completados recientemente
         recent_completed = (SavedQuiz.objects
                            .filter(is_completed=True)
                            .order_by('-updated_at')[:5])
-        completed_serializer = SavedQuizListSerializer(recent_completed, many=True)
+        completed_serializer = SavedQuizListSerializer(recent_completed, many=True, context={'request': request})
         
         return JsonResponse({
             'statistics': {
