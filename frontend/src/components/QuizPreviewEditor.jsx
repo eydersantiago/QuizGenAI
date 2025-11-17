@@ -62,6 +62,7 @@ export default function QuizPreviewEditor({
   onCancel,
   sessionId
 }) {
+  const coverImage = config.coverImage || null;
   // ========================================
   // ESTADO CON HOOKS PERSONALIZADOS OPTIMIZADOS
   // ========================================
@@ -448,6 +449,11 @@ export default function QuizPreviewEditor({
     <div className="quiz-preview-editor">
       {/* Header con información del quiz */}
       <div className="editor-header">
+        {coverImage && (
+          <div className="editor-cover" style={{ marginRight: 16 }}>
+            <img src={coverImage} alt="Portada del quiz" style={{ width: 160, height: 160, objectFit: 'cover', borderRadius: 8 }} />
+          </div>
+        )}
         <h2 className="editor-title">Editar Preguntas del Cuestionario</h2>
         <div className="editor-config">
           <div className="config-item">

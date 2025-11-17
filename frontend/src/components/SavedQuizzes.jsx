@@ -450,8 +450,20 @@ export default function SavedQuizzes() {
                 Crear Nuevo Cuestionario
               </button>
             </motion.div>
-          ) : (
-            filteredQuizzes.map((quiz) => (
+          ) : 
+            filteredQuizzes.map((quiz) => {
+              // calcular URL de portada si existe
+              let coverSrc = null;
+              try {
+                if (quiz.cover_image) {
+                  const apiOrigin = new URL(API_BASE).origin;
+                  coverSrc = quiz.cover_image.startsWith("http") ? quiz.cover_image : apiOrigin + quiz.cover_image;
+                }
+              } catch (e) {
+                coverSrc = quiz.cover_image || null;
+              }
+
+              return (
               <motion.div
                 key={quiz.id}
                 className="quiz-card"
@@ -460,36 +472,46 @@ export default function SavedQuizzes() {
                 exit={{ opacity: 0, y: -20 }}
                 whileHover={{ scale: 1.02 }}
               >
-                <div className="quiz-header">
-                  <div className="quiz-title-section">
-                    <h3>{quiz.title}</h3>
-                    {/* Indicador de quiz de repaso */}
-                    {quiz.is_review && quiz.original_quiz_info && (
-                      <div className="review-badge" title={`Repaso de: ${quiz.original_quiz_info.title}`}>
-                        <GitBranch size={14} />
-                        <span>Repaso</span>
-                      </div>
+                <div className="quiz-top">
+                  <div className="quiz-media">
+                    {coverSrc ? (
+                      <img src={coverSrc} alt={`Portada ${quiz.title}`} />
+                    ) : (
+                      <div className="quiz-media-placeholder">Portada</div>
                     )}
                   </div>
-                  <div className="quiz-actions">
-                    <button
-                      onClick={() => handleLoadQuiz(quiz.id)}
-                      className="action-button load"
-                      title="Cargar cuestionario"
-                    >
-                      <Play size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteQuiz(quiz.id, quiz.title)}
-                      className="action-button delete"
-                      title="Eliminar cuestionario"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
 
-                <div className="quiz-info">
+                  <div className="quiz-main">
+                    <div className="quiz-header">
+                      <div className="quiz-title-section">
+                        <h3>{quiz.title}</h3>
+                        {/* Indicador de quiz de repaso */}
+                        {quiz.is_review && quiz.original_quiz_info && (
+                          <div className="review-badge" title={`Repaso de: ${quiz.original_quiz_info.title}`}>
+                            <GitBranch size={14} />
+                            <span>Repaso</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="quiz-actions">
+                        <button
+                          onClick={() => handleLoadQuiz(quiz.id)}
+                          className="action-button load"
+                          title="Cargar cuestionario"
+                        >
+                          <Play size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteQuiz(quiz.id, quiz.title)}
+                          className="action-button delete"
+                          title="Eliminar cuestionario"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="quiz-info">
                   <div className="info-row">
                     <span className="label">Tema:</span>
                     <span className="value">{quiz.topic}</span>
@@ -585,9 +607,12 @@ export default function SavedQuizzes() {
                     </div>
                   )}
                 </div>
+                  </div>
+                </div>
               </motion.div>
-            ))
-          )}
+              )
+            })
+          }
         </AnimatePresence>
       </div>
     </motion.div>

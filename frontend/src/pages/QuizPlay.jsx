@@ -576,6 +576,7 @@ export default function QuizPlay(props) {
 
   // Preguntas "vigentes" que se muestran
   const [questions, setQuestions] = useState([]);
+  const [coverImage, setCoverImage] = useState(null);
   // Respuestas del usuario
   const [answers, setAnswers] = useState({});
   const [submitted, setSubmitted] = useState(false);
@@ -1341,6 +1342,16 @@ export default function QuizPlay(props) {
           setIsLoadedQuiz(true);
           setSavedQuizId(savedQuizData.quiz_id);
           setQuizTitle(savedQuizData.title || "");
+          if (savedQuizData.cover_image) {
+            try {
+              const apiOrigin = new URL(API_BASE).origin;
+              setCoverImage(savedQuizData.cover_image.startsWith('http') ? savedQuizData.cover_image : apiOrigin + savedQuizData.cover_image);
+            } catch (e) {
+              setCoverImage(savedQuizData.cover_image);
+            }
+          } else {
+            setCoverImage(null);
+          }
           setQuestions(savedQuizData.questions || []);
           setAnswers(savedQuizData.user_answers || {});
           setCurrentQuestionIndex(savedQuizData.current_question || 0);
@@ -1375,7 +1386,7 @@ export default function QuizPlay(props) {
         const used = usedHeader || data.source || "(desconocido)";
         const fallback = (fbHeader ?? (data.fallback_used ? "1" : "0")) === "1";
 
-        console.log("[LLM][QuizPlay] requested:", provider, "used:", used, "fallback:", fallback);
+        // console.log("[LLM][QuizPlay] requested:", provider, "used:", used, "fallback:", fallback);
         // --------------------------------------------
 
         if (!resp.ok)
@@ -1383,6 +1394,17 @@ export default function QuizPlay(props) {
         if (!alive) return;
 
         const loaded = Array.isArray(data.preview) ? data.preview : [];
+        // cover image (ruta relativa desde backend, convertir a absolute si es necesario)
+        if (data.cover_image) {
+          try {
+            const apiOrigin = new URL(API_BASE).origin;
+            setCoverImage(data.cover_image.startsWith('http') ? data.cover_image : apiOrigin + data.cover_image);
+          } catch (e) {
+            setCoverImage(data.cover_image);
+          }
+        } else {
+          setCoverImage(null);
+        }
         setQuestions(loaded);
         // Inicializa historial con la versión original
         const initHistory = {};
@@ -2206,13 +2228,13 @@ export default function QuizPlay(props) {
 
       const method = quizId ? "PUT" : "POST";
 
-      console.log("=== DEBUG AUTOGUARDADO ===");
-      console.log("Payload a enviar:", JSON.stringify(payload, null, 2));
-      console.log("Quiz ID:", quizId, "Method:", method);
-      console.log("Endpoint:", endpoint);
-      console.log("CurrentAnswers:", currentAnswers);
-      console.log("SessionId:", sessionId);
-      console.log("Questions length:", questions?.length);
+      // console.log("=== DEBUG AUTOGUARDADO ===");
+      // console.log("Payload a enviar:", JSON.stringify(payload, null, 2));
+      // console.log("Quiz ID:", quizId, "Method:", method);
+      // console.log("Endpoint:", endpoint);
+      // console.log("CurrentAnswers:", currentAnswers);
+      // console.log("SessionId:", sessionId);
+      // console.log("Questions length:", questions?.length);
 
       const response = await fetch(endpoint, {
         method,
@@ -2220,12 +2242,12 @@ export default function QuizPlay(props) {
         body: JSON.stringify(payload),
       });
 
-      console.log("Response status:", response.status);
-      console.log("Response ok:", response.ok);
+      // console.log("Response status:", response.status);
+      // console.log("Response ok:", response.ok);
 
       // Intentar leer la respuesta como texto primero
       const responseText = await response.text();
-      console.log("Response text:", responseText);
+      // console.log("Response text:", responseText);
 
       let result = {};
       try {
@@ -2384,7 +2406,7 @@ export default function QuizPlay(props) {
           const suggestion = await requestSuggestion(context, sessionId);
 
           if (suggestion) {
-            console.log('[QuizPlay] Sugerencia recibida:', suggestion);
+            // console.log('[QuizPlay] Sugerencia recibida:', suggestion);
             setCurrentSuggestion(suggestion);
             setShowSuggestion(true);
             setLastSuggestionTime(Date.now());
@@ -2631,7 +2653,12 @@ export default function QuizPlay(props) {
   return (
     <main className="shell qp-root">
       <header className="hero qp-header">
-        <div className="qp-header-content">
+        <div className="qp-header-content" style={{ display: 'flex', alignItems: 'flex-start', gap: 20 }}>
+          {coverImage && (
+            <div style={{ flex: '0 0 auto' }}>
+              <img src={coverImage} alt="Portada del quiz" style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: 8 }} />
+            </div>
+          )}
           <div className="qp-title-section">
             <h1>{isLoadedQuiz && quizTitle ? quizTitle : "Tu Quiz"}</h1>
             <p>Responde las preguntas. Cuando termines, presiona "Calificar".</p>

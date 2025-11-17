@@ -4,11 +4,17 @@ import json
 import re
 import uuid
 from dotenv import load_dotenv
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse, FileResponse
 from rest_framework.decorators import api_view
 from rest_framework import status
 from django.utils import timezone
 import requests  # <— NUEVO
+import base64
+import time
+from typing import List
+import concurrent.futures
+import mimetypes
+from django.http import Http404
 
 
 #import google.generativeai as genai
@@ -18,6 +24,15 @@ load_dotenv()
 
 # =========================================================
 # Endpoint de salud para diagnóstico
+import io
+from django.conf import settings
+
+# PIL is optional; try to import for convenience
+# =========================================================
+try:
+    from PIL import Image as PILImage
+except Exception:
+    PILImage = None
 # =========================================================
 
 @api_view(['GET'])
@@ -28,6 +43,41 @@ def health_check(request):
         'message': 'Backend funcionando correctamente',
         'timestamp': timezone.now().isoformat()
     })
+
+
+@api_view(['GET'])
+def serve_generated_media(request, filepath: str):
+    """
+    Servir archivos desde MEDIA_ROOT de forma controlada.
+    URL propuesta: /api/media/proxy/<path:filepath>/
+    - Evita traversal y sólo entrega archivos dentro de MEDIA_ROOT.
+    - Útil en desarrollo o cuando quieras que la API devuelva la imagen
+      como recurso del mismo origen (evita problemas de mixed-content).
+    """
+    # Normalizar y prevenir path traversal
+    if not filepath or '..' in filepath or filepath.startswith('/') or filepath.startswith('\\'):
+        raise Http404("Invalid path")
+
+    # Solo servir archivos dentro de la subcarpeta 'generated' para mitigar exposición accidental
+    fp_norm = filepath.replace('\\', '/').lstrip('/')
+    if not fp_norm.startswith('generated/'):
+        raise Http404("Not allowed")
+
+    # Construir ruta absoluta y validar que esté dentro de MEDIA_ROOT
+    fullpath = os.path.normpath(os.path.join(str(settings.MEDIA_ROOT), fp_norm))
+    media_root_norm = os.path.normpath(str(settings.MEDIA_ROOT))
+    if not fullpath.startswith(media_root_norm):
+        raise Http404("Not allowed")
+
+    if not os.path.exists(fullpath) or not os.path.isfile(fullpath):
+        raise Http404("File not found")
+
+    ct = mimetypes.guess_type(fullpath)[0] or 'application/octet-stream'
+    fh = open(fullpath, 'rb')
+    resp = FileResponse(fh, content_type=ct)
+    resp['Content-Length'] = str(os.path.getsize(fullpath))
+    resp['Content-Disposition'] = f'inline; filename="{os.path.basename(fullpath)}"'
+    return resp
 
 # =========================================================
 # Utilidades generales
@@ -709,6 +759,16 @@ def sessions(request):
         types=types,
         counts=counts
     )
+    # Intentar generar portada asociada a la sesión (timeout corto)
+    try:
+        prompt_for_image = f"{topic} - {difficulty} quiz cover"
+        img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
+        if img_rel:
+            session.cover_image = img_rel
+            session.save(update_fields=['cover_image'])
+    except Exception:
+        # No bloquear la creación de la sesión por fallo en generación de imagen
+        pass
     return JsonResponse({'session_id': str(session.id), 'topic': topic, 'difficulty': difficulty}, status=201)
 
 
@@ -803,11 +863,29 @@ def preview_questions(request):
             session.latest_preview = generated
             session.save(update_fields=["latest_preview"])
 
+            # Si la sesión no tiene imagen de portada persistida, intentar generarla
+            try:
+                if not getattr(session, 'cover_image', ''):
+                    prompt_for_image = f"{topic} - {difficulty} quiz cover"
+                    img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
+                    if img_rel:
+                        session.cover_image = img_rel
+                        session.save(update_fields=['cover_image'])
+            except Exception:
+                # No bloquear el preview si falla la generación de la imagen
+                pass
+
         resp = {
             'preview': generated,
             'source': provider_used,
             'fallback_used': did_fallback
         }
+        if session and getattr(session, 'cover_image', ''):
+            # Devolver URL absoluta vía endpoint proxy para evitar problemas de serving/static
+            try:
+                resp['cover_image'] = request.build_absolute_uri(f"/api/media/proxy/{session.cover_image}")
+            except Exception:
+                resp['cover_image'] = f"{settings.MEDIA_URL}{session.cover_image}"
         if debug:
             resp['debug'] = {
                 'preferred': preferred,
@@ -1051,3 +1129,226 @@ def gemini_generate(request):
         )
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
+def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) -> str:
+    """Genera una imagen con Gemini y devuelve la ruta relativa dentro de MEDIA_ROOT (ej: 'generated/image_x.png').
+    Si falla o excede timeout, retorna None.
+    """
+    prompt = (prompt or '').strip()
+    if not prompt:
+        return None
+
+    def _do_generate():
+        genai = _configure_gemini()
+        model_obj = genai.GenerativeModel('gemini-2.5-flash-image')
+        # Ajustar prompt para tamaño y estilo educativo
+        p = f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. Estilo claro, educativo, colores brillantes, poco texto."
+        resp = model_obj.generate_content(p)
+
+        # Extraer inline data (robusto)
+        candidates = getattr(resp, 'candidates', None) or []
+        image_data = None
+        if candidates:
+            content = getattr(candidates[0], 'content', None)
+            parts = getattr(content, 'parts', []) if content is not None else []
+            for part in parts:
+                inline = getattr(part, 'inline_data', None)
+                if inline is None:
+                    continue
+                d = getattr(inline, 'data', None)
+                if d:
+                    image_data = d
+                    break
+
+        if not image_data:
+            raise RuntimeError('no_inline_image_data_found')
+
+        # Decodificar
+        if isinstance(image_data, (bytes, bytearray)):
+            image_bytes = bytes(image_data)
+        else:
+            s = str(image_data).strip()
+            if s.startswith('data:') and ',' in s:
+                s = s.split(',', 1)[1]
+            image_bytes = base64.b64decode(s)
+
+        # Detectar extensión
+        ext = 'png'
+        try:
+            if image_bytes.startswith(b'\x89PNG'):
+                ext = 'png'
+            elif image_bytes.startswith(b'\xff\xd8\xff'):
+                ext = 'jpg'
+            elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
+                ext = 'gif'
+            else:
+                if PILImage is not None:
+                    try:
+                        img = PILImage.open(io.BytesIO(image_bytes))
+                        fmt = (getattr(img, 'format', None) or '').lower()
+                        if fmt:
+                            ext = 'jpg' if fmt == 'jpeg' else fmt
+                    except Exception:
+                        pass
+        except Exception:
+            ext = 'png'
+
+        output_dir = os.path.join(settings.MEDIA_ROOT, 'generated')
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"image_{int(time.time())}.{ext}"
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, 'wb') as fh:
+            fh.write(image_bytes)
+
+        # Retornar ruta relativa usando slashes '/' para que sea válida como URL
+        return f"generated/{filename}"
+
+    # Ejecutar con timeout usando ThreadPoolExecutor
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_do_generate)
+            return fut.result(timeout=timeout_secs)
+    except concurrent.futures.TimeoutError:
+        return None
+    except Exception:
+        return None
+
+@api_view(['POST'])
+def gemini_generate_image(request):
+    prompt = (request.data.get('prompt') or '').strip()
+    # Optional session_id to persist generated image to a GenerationSession
+    session_id = (request.data.get('session_id') or request.GET.get('session_id'))
+    if not prompt:
+        return JsonResponse({'error': 'prompt required'}, status=400)
+
+    try:
+        # Usar helper que encapsula la generación con timeout
+        filepath_rel = generate_cover_image(prompt, size=1024, timeout_secs=10)
+        if not filepath_rel:
+            # fallback: devolver placeholder (si existe en MEDIA_ROOT/static o similar)
+            placeholder = os.path.join(settings.MEDIA_ROOT, 'generated', 'placeholder.png')
+            if os.path.exists(placeholder):
+                fh = open(placeholder, 'rb')
+                response = FileResponse(fh, content_type='image/png')
+                response['Content-Length'] = str(os.path.getsize(placeholder))
+                response['Content-Disposition'] = f'inline; filename="placeholder.png"'
+                return response
+            return JsonResponse({'error': 'image_generation_failed'}, status=500)
+
+        # filepath_rel es algo como 'generated/image_123.png'
+        fullpath = os.path.join(settings.MEDIA_ROOT, filepath_rel)
+        ext = os.path.splitext(fullpath)[1].lstrip('.')
+        ct = 'application/octet-stream'
+        if ext in ('png', 'gif'):
+            ct = f'image/{ext}'
+        elif ext in ('jpg', 'jpeg'):
+            ct = 'image/jpeg'
+        elif ext != 'bin':
+            ct = f'image/{ext}'
+
+        # Si se proporcionó session_id, persistir la ruta relativa en la sesión (no sobrescribir)
+        if session_id:
+            try:
+                ss = GenerationSession.objects.get(id=session_id)
+                if not getattr(ss, 'cover_image', ''):
+                    ss.cover_image = filepath_rel
+                    ss.save(update_fields=['cover_image'])
+            except Exception:
+                # No bloquear la entrega de la imagen por fallo al persistir
+                pass
+
+        fh = open(fullpath, 'rb')
+        response = FileResponse(fh, content_type=ct)
+        response['Content-Length'] = str(os.path.getsize(fullpath))
+        response['Content-Disposition'] = f'inline; filename="{os.path.basename(fullpath)}"'
+        # Exponer la ruta relativa y la URL proxy en cabeceras para que el frontend sepa la ubicación
+        try:
+            proxy_url = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
+            response['X-Cover-Image-Rel'] = filepath_rel
+            response['X-Cover-Image-Url'] = proxy_url
+        except Exception:
+            pass
+        return response
+        
+
+    except RuntimeError as e:
+        # genai_unavailable or missing API key => 503 so frontend can treat as external service down
+        return JsonResponse({'error': 'genai_unavailable', 'message': str(e)}, status=503)
+    except Exception as e:
+        return JsonResponse({'error': 'generate_failed', 'message': str(e)}, status=500)
+
+
+def guardarLocal(resp):
+    # Guardar respuesta completa (debug) en un archivo JSON dentro de MEDIA_ROOT/generated/debug
+    try:
+        dbg_dir = os.path.join(settings.MEDIA_ROOT, 'generated', 'debug')
+        os.makedirs(dbg_dir, exist_ok=True)
+        resp_file = os.path.join(dbg_dir, f"resp_{int(time.time())}.json")
+
+        # Intentar obtener una representación serializable
+        if hasattr(resp, "to_dict"):
+            serial = resp.to_dict()
+        else:
+            serial = {}
+            for attr in ("text", "candidates", "metadata"):
+                if hasattr(resp, attr):
+                    try:
+                        serial[attr] = getattr(resp, attr)
+                    except Exception:
+                        serial[attr] = str(getattr(resp, attr))
+            if not serial:
+                serial = {"repr": repr(resp)}
+
+        # Convertir elementos no serializables a strings
+        def _make_jsonable(o):
+            try:
+                json.dumps(o)
+                return o
+            except Exception:
+                return str(o)
+
+        serial_clean = {k: _make_jsonable(v) for k, v in serial.items()}
+
+        with open(resp_file, "w", encoding="utf-8") as fh:
+            json.dump(serial_clean, fh, ensure_ascii=False, indent=2)
+
+    except Exception:
+        # No interrumpir el flujo por fallo en guardado de debug
+        pass
+
+
+@api_view(['POST'])
+def update_session_preview(request, session_id):
+    """Actualizar latest_preview de una GenerationSession existente.
+    Body esperado: { latest_preview: [...], cover_image_rel?: 'generated/xxx.png' }
+    No sobrescribe cover_image si ya existe en la sesión (comportamiento intencional).
+    """
+    try:
+        session = GenerationSession.objects.get(id=session_id)
+    except GenerationSession.DoesNotExist:
+        return JsonResponse({'error': 'session not found'}, status=404)
+
+    data = request.data
+    latest = data.get('latest_preview')
+    if latest is None:
+        return JsonResponse({'error': 'latest_preview required'}, status=400)
+    # Guardar latest_preview
+    try:
+        session.latest_preview = latest
+        # Si se envió cover_image_rel y la sesión no tiene cover_image, persistirla
+        cover_rel = data.get('cover_image_rel')
+        if cover_rel and not getattr(session, 'cover_image', ''):
+            session.cover_image = cover_rel
+            session.save(update_fields=['latest_preview', 'cover_image'])
+        else:
+            session.save(update_fields=['latest_preview'])
+    except Exception as e:
+        return JsonResponse({'error': 'save_failed', 'message': str(e)}, status=500)
+
+    resp = {
+        'ok': True,
+        'session_id': str(session.id),
+        'cover_image': (request.build_absolute_uri(f"/api/media/proxy/{session.cover_image}") if getattr(session, 'cover_image', '') else '')
+    }
+    return JsonResponse(resp, status=200)

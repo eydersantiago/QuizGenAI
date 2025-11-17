@@ -29,6 +29,7 @@ urlpatterns = [
     path("health/", views.health_check, name="health_check"),
     
     path("sessions/", views.sessions, name="sessions"),
+    path("sessions/<uuid:session_id>/update-preview/", views.update_session_preview, name="update_session_preview"),
     path("preview/", views.preview_questions, name="preview_questions"),
     path("regenerate/", views.regenerate_question, name="regenerate_question"),
     path("confirm-replace/", views.confirm_replace, name="confirm_replace"),
@@ -68,6 +69,9 @@ urlpatterns = [
     path("intent-router/batch_parse/", batch_parse_intents, name="batch_parse_intents"),
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
+    path("gemini-image/", views.gemini_generate_image, name="gemini_generate_image"),
     path("hint/", view_hint.hint_view, name="hint"),
     path("ffmpeg-debug/", ffmpeg_debug, name="ffmpeg_debug"),
+    # Proxy para servir archivos de MEDIA_ROOT de forma controlada (dev/debug)
+    path("media/proxy/<path:filepath>/", views.serve_generated_media, name="serve_generated_media"),
 ]

@@ -1,6 +1,7 @@
 # api/serializers.py
 from rest_framework import serializers
 from .models import SavedQuiz, GenerationSession
+from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 import re
 
@@ -63,11 +64,13 @@ class SavedQuizSerializer(serializers.ModelSerializer):
     marked_count = serializers.SerializerMethodField()
     is_review = serializers.SerializerMethodField()
     original_quiz_info = serializers.SerializerMethodField()
+    cover_image = serializers.SerializerMethodField()
 
     class Meta:
         model = SavedQuiz
         fields = [
             'id', 'title', 'topic', 'category', 'difficulty',
+                'cover_image',
             'types', 'counts', 'questions', 'user_answers',
             'current_question', 'is_completed', 'score',
             'favorite_questions',  # Campo de preguntas marcadas
@@ -82,6 +85,35 @@ class SavedQuizSerializer(serializers.ModelSerializer):
     def get_total_questions(self, obj):
         """Retorna el número total de preguntas en el quiz"""
         return len(obj.questions) if obj.questions else 0
+
+    def get_cover_image(self, obj):
+        """Devuelve la URL pública completa de la imagen de portada.
+        Si `cover_image` ya es una URL absoluta, la devuelve tal cual. Si es
+        una ruta relativa (p.ej. 'generated/x.png'), la prefija con
+        `settings.MEDIA_URL`.
+        """
+        v = (getattr(obj, 'cover_image', '') or '')
+        v = v.strip()
+        if not v:
+            return ''
+        if v.startswith('http://') or v.startswith('https://'):
+            return v
+        # Si tenemos la request en el contexto, preferimos construir una URL absoluta
+        # que use el proxy interno para servir archivos desde MEDIA_ROOT (más robusto en dev).
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        if req:
+            try:
+                return req.build_absolute_uri(f"/api/media/proxy/{v.lstrip('/')}" )
+            except Exception:
+                pass
+
+        # Fallback: construir con MEDIA_URL
+        media_url = (getattr(settings, 'MEDIA_URL', '/') or '/')
+        if not media_url.endswith('/'):
+            media_url = media_url + '/'
+        if v.startswith('/'):
+            v = v.lstrip('/')
+        return f"{media_url}{v}"
 
     def get_marked_count(self, obj):
         """Retorna el número de preguntas marcadas como favoritas"""
@@ -179,6 +211,7 @@ class SavedQuizListSerializer(serializers.ModelSerializer):
         model = SavedQuiz
         fields = [
             'id', 'title', 'topic', 'category', 'difficulty',
+                'cover_image',
             'is_completed', 'created_at', 'updated_at', 'last_accessed',
             'progress_percentage', 'answered_count', 'total_questions',
             'favorite_questions',  # Lista completa de índices marcados
@@ -186,6 +219,29 @@ class SavedQuizListSerializer(serializers.ModelSerializer):
             'is_review',  # Indica si es un quiz de repaso
             'original_quiz_info'  # Info del quiz original si es repaso
         ]
+
+    cover_image = serializers.SerializerMethodField()
+
+    def get_cover_image(self, obj):
+        v = (getattr(obj, 'cover_image', '') or '').strip()
+        if not v:
+            return ''
+        if v.startswith('http://') or v.startswith('https://'):
+            return v
+        # Prefer proxy URL when request is available
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        if req:
+            try:
+                return req.build_absolute_uri(f"/api/media/proxy/{v.lstrip('/')}" )
+            except Exception:
+                pass
+
+        media_url = (getattr(settings, 'MEDIA_URL', '/') or '/')
+        if not media_url.endswith('/'):
+            media_url = media_url + '/'
+        if v.startswith('/'):
+            v = v.lstrip('/')
+        return f"{media_url}{v}"
 
     def get_total_questions(self, obj):
         """Retorna el número total de preguntas en el quiz"""

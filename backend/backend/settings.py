@@ -128,6 +128,11 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # --- Seguridad detrás de proxy de Azure ---
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# --- Media (uploads) ---
+# Directorio donde guardamos archivos generados/medias (ej: generated/)
+MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
+
 if not DEBUG:
     # Endurecer en producción
     #SECURE_SSL_REDIRECT = True

@@ -176,6 +176,7 @@ export default function QuizForm(props) {
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
   const [preview, setPreview] = useState(null);
+  const [coverImage, setCoverImage] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const navigate = useNavigate();
@@ -432,6 +433,18 @@ export default function QuizForm(props) {
 
       if (previewRes.ok) {
         setPreview(json.preview);
+        // Guardar URL de portada (si el backend la devolvió)
+        if (json.cover_image) {
+          try {
+            const apiOrigin = new URL(API_BASE).origin;
+            const url = json.cover_image.startsWith('http') ? json.cover_image : apiOrigin + json.cover_image;
+            setCoverImage(url);
+          } catch (e) {
+            setCoverImage(json.cover_image);
+          }
+        } else {
+          setCoverImage(null);
+        }
         // Activar el modo editor
         setShowEditor(true);
       } else {
@@ -503,7 +516,30 @@ export default function QuizForm(props) {
       setCreating(true);
 
       // Crear el quiz con las preguntas editadas
-      // Primero, necesitamos crear una nueva sesión o usar la existente
+      // Si ya existe una sesión creada durante la previa, reutilizarla
+      if (currentSessionId) {
+        try {
+          const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/update-preview/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ latest_preview: editedQuestions })
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            throw new Error(json?.error || 'No se pudo actualizar la sesión');
+          }
+
+          await Swal.fire({ title: 'Sesión actualizada', text: `ID: ${currentSessionId}`, icon: 'success', timer: 1200, timerProgressBar: true });
+          clearSavedData();
+          navigate(`/quiz/${currentSessionId}`);
+          return;
+        } catch (err) {
+          console.error('Error al actualizar sesión existente:', err);
+          // Si falla la actualización, seguir con la creación de una nueva sesión como fallback
+        }
+      }
+
+      // Si no había sesión previa, crear una nueva como antes
       const payload = {
         topic,
         difficulty,
@@ -624,7 +660,7 @@ export default function QuizForm(props) {
     return (
       <QuizPreviewEditor
         questions={preview}
-        config={{ topic, difficulty, types, counts }}
+        config={{ topic, difficulty, types, counts, coverImage }}
         onConfirm={handleEditorConfirm}
         onCancel={handleEditorCancel}
         sessionId={currentSessionId}
@@ -816,6 +852,11 @@ export default function QuizForm(props) {
             </button>
           </div>
             <h3 className="text-2xl font-bold text-indigo-600">📋 Previsualización</h3>
+            {coverImage && (
+              <div className="preview-cover mt-4 mb-2">
+                <img src={coverImage} alt="Portada del quiz" style={{ width: 240, height: 240, objectFit: 'cover', borderRadius: 8 }} />
+              </div>
+            )}
             {preview.map((q, i) => (
               <motion.div key={i} className="preview-card" whileHover={{ scale: 1.02 }}>
                 <div className="font-semibold_2">{q.question}</div>
