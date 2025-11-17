@@ -177,6 +177,9 @@ export default function QuizForm(props) {
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
   const [preview, setPreview] = useState(null);
   const [coverImage, setCoverImage] = useState(null);
+  const [coverRegenerationCount, setCoverRegenerationCount] = useState(0);
+  const [coverRegenerationRemaining, setCoverRegenerationRemaining] = useState(3);
+  const [coverImageHistory, setCoverImageHistory] = useState([]);
   const [lastSaved, setLastSaved] = useState(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const navigate = useNavigate();
@@ -434,17 +437,23 @@ export default function QuizForm(props) {
       if (previewRes.ok) {
         setPreview(json.preview);
         // Guardar URL de portada (si el backend la devolvió)
+        let coverImageUrl = null;
         if (json.cover_image) {
           try {
             const apiOrigin = new URL(API_BASE).origin;
-            const url = json.cover_image.startsWith('http') ? json.cover_image : apiOrigin + json.cover_image;
-            setCoverImage(url);
+            coverImageUrl = json.cover_image.startsWith('http') ? json.cover_image : apiOrigin + json.cover_image;
+            setCoverImage(coverImageUrl);
           } catch (e) {
-            setCoverImage(json.cover_image);
+            coverImageUrl = json.cover_image;
+            setCoverImage(coverImageUrl);
           }
         } else {
           setCoverImage(null);
         }
+        // Guardar datos de regeneración
+        setCoverRegenerationCount(json?.cover_regeneration_count || 0);
+        setCoverRegenerationRemaining(json?.cover_regeneration_remaining !== undefined ? json.cover_regeneration_remaining : 3);
+        setCoverImageHistory(json?.cover_image_history || []);
         // Activar el modo editor
         setShowEditor(true);
       } else {
@@ -463,7 +472,15 @@ export default function QuizForm(props) {
     if (!validate()) return;
     try {
       setCreating(true);
-      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
+      // Filtrar counts para incluir solo los tipos activos
+      const activeTypes = Object.keys(types).filter((k) => types[k]);
+      const filteredCounts = {};
+      activeTypes.forEach(t => {
+        if (counts[t] !== undefined) {
+          filteredCounts[t] = counts[t];
+        }
+      });
+      const payload = { topic, difficulty, types: activeTypes, counts: filteredCounts };
       const res = await fetch(
         `${API_BASE}/sessions/`,
         withProviderHeaders(
@@ -660,7 +677,16 @@ export default function QuizForm(props) {
     return (
       <QuizPreviewEditor
         questions={preview}
-        config={{ topic, difficulty, types, counts, coverImage }}
+        config={{ 
+          topic, 
+          difficulty, 
+          types, 
+          counts, 
+          coverImage,
+          coverRegenerationCount,
+          coverRegenerationRemaining,
+          coverImageHistory
+        }}
         onConfirm={handleEditorConfirm}
         onCancel={handleEditorCancel}
         sessionId={currentSessionId}

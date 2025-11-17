@@ -94,13 +94,24 @@ WSGI_APPLICATION = "backend.wsgi.application"
 ASGI_APPLICATION = "backend.asgi.application"
 
 # --- Base de datos ---
-DATABASES = {
-    "default": dj_database_url.parse(
-        os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
-        conn_max_age=600,
-        ssl_require=bool(os.getenv("DATABASE_URL", "")),
-    )
-}
+# Evita pasar sslmode a SQLite (causa TypeError en sqlite3.connect)
+_db_url = os.getenv("DATABASE_URL")
+if _db_url:
+    _is_postgres = _db_url.startswith("postgres://") or _db_url.startswith("postgresql://")
+    DATABASES = {
+        "default": dj_database_url.parse(
+            _db_url,
+            conn_max_age=600,
+            ssl_require=_is_postgres,
+        )
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 # --- Password validators ---
 AUTH_PASSWORD_VALIDATORS = [
