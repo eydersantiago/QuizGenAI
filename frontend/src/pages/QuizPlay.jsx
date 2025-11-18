@@ -19,6 +19,7 @@ import { requestSuggestion, shouldShowSuggestion, SUGGESTION_CONFIG } from "../s
 import ProactiveSuggestion from "../components/ProactiveSuggestion";
 // ========================================================================
 import { useVoiceHint } from "../voice/useVoiceHint";
+import QuizCoverImage from "../components/QuizCoverImage";
 
 
 
@@ -594,6 +595,7 @@ export default function QuizPlay(props) {
 
   const [isLoadedQuiz, setIsLoadedQuiz] = useState(false);
   const [quizTitle, setQuizTitle] = useState("");
+  const [quizTopic, setQuizTopic] = useState("");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
   // Estado para preguntas marcadas como favoritas
@@ -1342,6 +1344,7 @@ export default function QuizPlay(props) {
           setIsLoadedQuiz(true);
           setSavedQuizId(savedQuizData.quiz_id);
           setQuizTitle(savedQuizData.title || "");
+          setQuizTopic(savedQuizData.topic || location.state?.topic || "");
           if (savedQuizData.cover_image) {
             try {
               const apiOrigin = new URL(API_BASE).origin;
@@ -1406,6 +1409,8 @@ export default function QuizPlay(props) {
           setCoverImage(null);
         }
         setQuestions(loaded);
+        // Capturar tema del quiz
+        setQuizTopic(data.topic || location.state?.topic || "");
         // Inicializa historial con la versión original
         const initHistory = {};
         loaded.forEach((q, i) => (initHistory[i] = [q]));
@@ -2729,6 +2734,13 @@ export default function QuizPlay(props) {
           </button>
         </div>
       </header>
+
+      {/* Imagen de portada del quiz */}
+      <QuizCoverImage 
+        coverImage={coverImage} 
+        topic={quizTopic || location.state?.topic || ""} 
+        loading="lazy"
+      />
 
       <section className="card">
         <div className="qp-body">

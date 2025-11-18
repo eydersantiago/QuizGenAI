@@ -40,6 +40,8 @@ import { useQuestionsState } from "../hooks/useQuestionsState";
 import { useDebounce } from "../hooks/useDebounce";
 import { useMultiTabSync } from "../hooks/useMultiTabSync";
 import { useKeyboardNav } from "../hooks/useKeyboardNav";
+import CoverImageRegenerator from "./CoverImageRegenerator";
+import ImageHistoryGallery from "./ImageHistoryGallery";
 import "../estilos/QuizPreviewEditor.css";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000/api";
@@ -62,7 +64,11 @@ export default function QuizPreviewEditor({
   onCancel,
   sessionId
 }) {
-  const coverImage = config.coverImage || null;
+  const [coverImage, setCoverImage] = useState(config.coverImage || null);
+  const [regenerationCount, setRegenerationCount] = useState(config.coverRegenerationCount || 0);
+  const [remainingAttempts, setRemainingAttempts] = useState(config.coverRegenerationRemaining !== undefined ? config.coverRegenerationRemaining : 3);
+  const [imageHistory, setImageHistory] = useState(config.coverImageHistory || []);
+  
   // ========================================
   // ESTADO CON HOOKS PERSONALIZADOS OPTIMIZADOS
   // ========================================
@@ -442,6 +448,23 @@ export default function QuizPreviewEditor({
   }, [validateQuestions, editedQuestions, config.topic, config.difficulty, sessionId, resetModifications]);
 
   // ========================================
+  // MANEJO DE REGENERACIÓN DE IMAGEN
+  // ========================================
+
+  const handleImageRegenerate = useCallback((newImageUrl, newCount, newRemaining, newHistory) => {
+    setCoverImage(newImageUrl);
+    setRegenerationCount(newCount);
+    setRemainingAttempts(newRemaining);
+    setImageHistory(newHistory);
+  }, []);
+
+  const handleImageSelect = useCallback((imageUrl, imagePath) => {
+    setCoverImage(imageUrl);
+    // Opcional: actualizar en backend si es necesario
+    // Por ahora solo actualizamos el estado local
+  }, []);
+
+  // ========================================
   // RENDERIZADO
   // ========================================
 
@@ -454,7 +477,21 @@ export default function QuizPreviewEditor({
             <img src={coverImage} alt="Portada del quiz" style={{ width: 160, height: 160, objectFit: 'cover', borderRadius: 8 }} />
           </div>
         )}
-        <h2 className="editor-title">Editar Preguntas del Cuestionario</h2>
+        <div className="editor-header-content">
+          <h2 className="editor-title">Editar Preguntas del Cuestionario</h2>
+          {sessionId && coverImage && (
+            <div className="editor-cover-controls">
+              <CoverImageRegenerator
+                sessionId={sessionId}
+                currentImageUrl={coverImage}
+                regenerationCount={regenerationCount}
+                remainingAttempts={remainingAttempts}
+                onRegenerate={handleImageRegenerate}
+                topic={config.topic || "Quiz"}
+              />
+            </div>
+          )}
+        </div>
         <div className="editor-config">
           <div className="config-item">
             <strong>Tema:</strong> {config.topic}
@@ -473,6 +510,17 @@ export default function QuizPreviewEditor({
           </div>
         )}
       </div>
+
+      {/* Galería de historial de imágenes */}
+      {sessionId && imageHistory && imageHistory.length > 0 && (
+        <div className="editor-image-history">
+          <ImageHistoryGallery
+            history={imageHistory}
+            currentImageUrl={coverImage}
+            onSelectImage={handleImageSelect}
+          />
+        </div>
+      )}
 
       {/* Contenedor de preguntas */}
       <div className="questions-container">

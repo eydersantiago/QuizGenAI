@@ -30,6 +30,7 @@ urlpatterns = [
     
     path("sessions/", views.sessions, name="sessions"),
     path("sessions/<uuid:session_id>/update-preview/", views.update_session_preview, name="update_session_preview"),
+    path("sessions/<uuid:session_id>/regenerate-cover/", views.regenerate_cover_image, name="regenerate_cover_image"),
     path("preview/", views.preview_questions, name="preview_questions"),
     path("regenerate/", views.regenerate_question, name="regenerate_question"),
     path("confirm-replace/", views.confirm_replace, name="confirm_replace"),

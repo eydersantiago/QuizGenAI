@@ -1205,4 +1205,120 @@
   }
 }
 
+/* ===========================
+   QuizCoverImage - Estilos para imagen de portada
+   =========================== */
+
+.quiz-cover-container {
+  margin: 2rem 0;
+  text-align: center;
+  padding: 0 1rem;
+}
+
+.quiz-cover-image {
+  width: 100%;
+  max-width: 900px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  display: block;
+  margin: 0 auto;
+}
+
+.quiz-cover-image.loading {
+  opacity: 0.5;
+  filter: blur(2px);
+}
+
+.quiz-cover-image:not(.loading) {
+  opacity: 1;
+}
+
+.quiz-cover-image:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+
+.quiz-cover-caption {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: #d5dbff;
+  font-style: italic;
+  opacity: 0.9;
+  text-align: center;
+}
+
+.quiz-cover-placeholder-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  max-width: 900px;
+  width: 100%;
+}
+
+.quiz-cover-placeholder {
+  width: 100%;
+  max-width: 900px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  opacity: 0.4;
+  border-radius: 12px;
+  filter: grayscale(0.3);
+}
+
+/* Tablet */
+@media (min-width: 768px) {
+  .quiz-cover-container {
+    margin: 2.5rem 0;
+    padding: 0 2rem;
+  }
+
+  .quiz-cover-image {
+    max-width: 1000px;
+  }
+
+  .quiz-cover-caption {
+    font-size: 0.9375rem;
+  }
+}
+
+/* Desktop */
+@media (min-width: 1024px) {
+  .quiz-cover-container {
+    margin: 3rem 0;
+    padding: 0 3rem;
+  }
+
+  .quiz-cover-image {
+    max-width: 1200px;
+  }
+
+  .quiz-cover-caption {
+    font-size: 1rem;
+    margin-top: 1rem;
+  }
+}
+
+/* Mobile pequeño */
+@media (max-width: 480px) {
+  .quiz-cover-container {
+    margin: 1.5rem 0;
+    padding: 0 0.5rem;
+  }
+
+  .quiz-cover-image {
+    max-width: 100%;
+    border-radius: 8px;
+  }
+
+  .quiz-cover-caption {
+    font-size: 0.8125rem;
+    margin-top: 0.5rem;
+  }
+}
+
 

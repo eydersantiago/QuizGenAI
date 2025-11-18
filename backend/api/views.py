@@ -3,6 +3,7 @@ import os
 import json
 import re
 import uuid
+import logging
 from dotenv import load_dotenv
 from django.http import JsonResponse, HttpResponse, FileResponse
 from rest_framework.decorators import api_view
@@ -15,6 +16,9 @@ from typing import List
 import concurrent.futures
 import mimetypes
 from django.http import Http404
+
+# Configurar logger
+logger = logging.getLogger(__name__)
 
 
 #import google.generativeai as genai
@@ -385,10 +389,30 @@ def _get_genai():
     Si falla la importación, elevamos un RuntimeError 'genai_unavailable' que se maneja como 503.
     """
     try:
-        import google.generativeai as genai  # import perezoso
+        import google.generativeai as genai  # import perezoso (SDK antiguo para texto)
         return genai
     except Exception as e:
         raise RuntimeError(f"genai_unavailable: {e}")
+
+def _get_genai_client():
+    """
+    Obtiene el cliente del nuevo SDK de Google GenAI para generación de imágenes.
+    Soporta gemini-2.5-flash-image e Imagen 4 API.
+    """
+    try:
+        from google import genai  # Nuevo SDK para imágenes
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+        client = genai.Client(api_key=api_key)
+        return client
+    except ImportError as e:
+        logger.error(f"[CoverImage] Nuevo SDK google.genai no está instalado: {e}")
+        logger.error("[CoverImage] Para instalar: pip install google-genai")
+        raise RuntimeError(f"google_genai_sdk_not_installed: Necesitas instalar 'google-genai' package. Ejecuta: pip install google-genai")
+    except Exception as e:
+        logger.error(f"[CoverImage] Error al inicializar cliente GenAI: {e}")
+        raise RuntimeError(f"genai_client_unavailable: {e}")
 
 def _configure_gemini():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -717,15 +741,19 @@ def _is_no_credits_msg(msg: str) -> bool:
 @api_view(['POST'])
 def sessions(request):
     data = request.data
+    logger.info(f"[Sessions] Creando sesión con datos: topic={data.get('topic')}, difficulty={data.get('difficulty')}, types={data.get('types')}, counts={data.get('counts')}")
+    
     topic = data.get('topic', '')
     difficulty = _normalize_difficulty(data.get('difficulty', ''))
     types = data.get('types', [])  # ["mcq","vf"]
     counts = data.get('counts', {})
 
     if not topic:
+        logger.warning("[Sessions] Error: topic requerido pero no proporcionado")
         return JsonResponse({'error':'topic required'}, status=400)
     cat = find_category_for_topic(topic)
     if not cat:
+        logger.warning(f"[Sessions] Error: topic '{topic}' fuera de dominio")
         return JsonResponse({
             'error':'topic fuera de dominio. Temas permitidos: ' + ', '.join(ALLOWED_TAXONOMY)
         }, status=400)
@@ -735,6 +763,7 @@ def sessions(request):
         types = ['mcq','vf']
     for t in types:
         if t not in valid_types:
+            logger.warning(f"[Sessions] Error: tipo '{t}' no permitido")
             return JsonResponse({'error':f'type {t} not allowed'}, status=400)
 
     total = 0
@@ -742,33 +771,46 @@ def sessions(request):
         try:
             c = int(counts.get(t, 0))
         except:
+            logger.warning(f"[Sessions] Error: count para '{t}' no es un entero")
             return JsonResponse({'error':f'count for {t} must be integer'}, status=400)
         if c < 0 or c > MAX_PER_TYPE:
+            logger.warning(f"[Sessions] Error: count para '{t}' fuera de rango (0..{MAX_PER_TYPE})")
             return JsonResponse({'error':f'count for {t} must be 0..{MAX_PER_TYPE}'}, status=400)
         total += c
 
     if total == 0:
+        logger.warning("[Sessions] Error: total de preguntas debe ser > 0")
         return JsonResponse({'error': 'total questions must be > 0'}, status=400)
     if total > MAX_TOTAL_QUESTIONS:
+        logger.warning(f"[Sessions] Error: total de preguntas ({total}) excede máximo ({MAX_TOTAL_QUESTIONS})")
         return JsonResponse({'error': f'total questions ({total}) exceed max {MAX_TOTAL_QUESTIONS}'}, status=400)
 
-    session = GenerationSession.objects.create(
-        topic=topic,
-        category=cat,
-        difficulty=difficulty,
-        types=types,
-        counts=counts
-    )
+    try:
+        session = GenerationSession.objects.create(
+            topic=topic,
+            category=cat,
+            difficulty=difficulty,
+            types=types,
+            counts=counts
+        )
+        logger.info(f"[Sessions] Sesión creada exitosamente: {session.id}")
+    except Exception as e:
+        logger.error(f"[Sessions] Error al crear sesión: {str(e)}", exc_info=True)
+        return JsonResponse({'error': f'Error al crear sesión: {str(e)}'}, status=500)
+    
     # Intentar generar portada asociada a la sesión (timeout corto)
     try:
+        logger.info(f"[Sessions] Intentando generar imagen de portada para sesión {session.id}")
         prompt_for_image = f"{topic} - {difficulty} quiz cover"
         img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
         if img_rel:
             session.cover_image = img_rel
             session.save(update_fields=['cover_image'])
-    except Exception:
+            logger.info(f"[Sessions] Imagen de portada generada y guardada: {img_rel}")
+    except Exception as e:
         # No bloquear la creación de la sesión por fallo en generación de imagen
-        pass
+        logger.warning(f"[Sessions] Error al generar imagen de portada (no crítico): {str(e)}")
+    
     return JsonResponse({'session_id': str(session.id), 'topic': topic, 'difficulty': difficulty}, status=201)
 
 
@@ -866,14 +908,18 @@ def preview_questions(request):
             # Si la sesión no tiene imagen de portada persistida, intentar generarla
             try:
                 if not getattr(session, 'cover_image', ''):
+                    logger.info(f"[CoverImage] Intentando generar imagen para sesión {session.id}, tema: {topic}")
                     prompt_for_image = f"{topic} - {difficulty} quiz cover"
                     img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
                     if img_rel:
                         session.cover_image = img_rel
                         session.save(update_fields=['cover_image'])
-            except Exception:
-                # No bloquear el preview si falla la generación de la imagen
-                pass
+                        logger.info(f"[CoverImage] Imagen generada exitosamente: {img_rel}")
+                    else:
+                        logger.warning(f"[CoverImage] generate_cover_image retornó None para sesión {session.id}")
+            except Exception as e:
+                # No bloquear el preview si falla la generación de la imagen, pero loguear el error
+                logger.error(f"[CoverImage] Error al generar imagen para sesión {session.id}: {str(e)}", exc_info=True)
 
         resp = {
             'preview': generated,
@@ -886,6 +932,26 @@ def preview_questions(request):
                 resp['cover_image'] = request.build_absolute_uri(f"/api/media/proxy/{session.cover_image}")
             except Exception:
                 resp['cover_image'] = f"{settings.MEDIA_URL}{session.cover_image}"
+            
+            # Incluir información de regeneración
+            resp['cover_regeneration_count'] = getattr(session, 'cover_regeneration_count', 0) or 0
+            resp['cover_regeneration_remaining'] = max(0, 3 - (getattr(session, 'cover_regeneration_count', 0) or 0))
+            
+            # Incluir historial de imágenes
+            history = getattr(session, 'cover_image_history', []) or []
+            if not isinstance(history, list):
+                history = []
+            history_urls = []
+            for img_path in history:
+                try:
+                    img_url = request.build_absolute_uri(f"/api/media/proxy/{img_path}")
+                except Exception:
+                    img_url = f"{settings.MEDIA_URL}{img_path}"
+                history_urls.append({
+                    'path': img_path,
+                    'url': img_url
+                })
+            resp['cover_image_history'] = history_urls
         if debug:
             resp['debug'] = {
                 'preferred': preferred,
@@ -1137,81 +1203,146 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
     """
     prompt = (prompt or '').strip()
     if not prompt:
+        logger.warning("[CoverImage] Prompt vacío, no se puede generar imagen")
         return None
 
     def _do_generate():
-        genai = _configure_gemini()
-        model_obj = genai.GenerativeModel('gemini-2.5-flash-image')
-        # Ajustar prompt para tamaño y estilo educativo
-        p = f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. Estilo claro, educativo, colores brillantes, poco texto."
-        resp = model_obj.generate_content(p)
-
-        # Extraer inline data (robusto)
-        candidates = getattr(resp, 'candidates', None) or []
-        image_data = None
-        if candidates:
-            content = getattr(candidates[0], 'content', None)
-            parts = getattr(content, 'parts', []) if content is not None else []
-            for part in parts:
-                inline = getattr(part, 'inline_data', None)
-                if inline is None:
-                    continue
-                d = getattr(inline, 'data', None)
-                if d:
-                    image_data = d
-                    break
-
-        if not image_data:
-            raise RuntimeError('no_inline_image_data_found')
-
-        # Decodificar
-        if isinstance(image_data, (bytes, bytearray)):
-            image_bytes = bytes(image_data)
-        else:
-            s = str(image_data).strip()
-            if s.startswith('data:') and ',' in s:
-                s = s.split(',', 1)[1]
-            image_bytes = base64.b64decode(s)
-
-        # Detectar extensión
-        ext = 'png'
         try:
-            if image_bytes.startswith(b'\x89PNG'):
-                ext = 'png'
-            elif image_bytes.startswith(b'\xff\xd8\xff'):
-                ext = 'jpg'
-            elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
-                ext = 'gif'
+            client = _get_genai_client()
+            logger.info(f"[CoverImage] Configurando Google GenAI Client para generar imagen con prompt: {prompt}")
+            
+            # Ajustar prompt para tamaño y estilo educativo
+            p = f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. Estilo claro, educativo, colores brillantes, poco texto."
+            
+            # Lista de modelos a intentar (en orden de preferencia)
+            model_candidates = [
+                'gemini-2.5-flash-image',  # Modelo nativo de Gemini para imágenes
+                'imagen-4.0-fast-generate-001',  # Imagen 4 Fast (más rápido)
+                'imagen-4.0-generate-001',  # Imagen 4 Estándar
+                'imagen-4.0-ultra-generate-001',  # Imagen 4 Ultra (mejor calidad)
+            ]
+            
+            image_data = None
+            model_used = None
+            last_error = None
+            
+            for model_name in model_candidates:
+                try:
+                    logger.info(f"[CoverImage] Intentando generar imagen con modelo: {model_name}")
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[p],
+                    )
+                    
+                    # Procesar respuesta según el nuevo SDK
+                    for part in response.parts:
+                        # Verificar si tiene inline_data (nuevo SDK)
+                        if hasattr(part, 'inline_data') and part.inline_data is not None:
+                            image_data = part.inline_data.data
+                            model_used = model_name
+                            logger.info(f"[CoverImage] Imagen generada exitosamente con {model_name}")
+                            break
+                        # Verificar si tiene inlineData (formato alternativo)
+                        elif hasattr(part, 'inlineData') and part.inlineData is not None:
+                            image_data = part.inlineData.data
+                            model_used = model_name
+                            logger.info(f"[CoverImage] Imagen generada exitosamente con {model_name} (formato inlineData)")
+                            break
+                        # Verificar si tiene as_image() method (nuevo SDK)
+                        elif hasattr(part, 'as_image'):
+                            try:
+                                img = part.as_image()
+                                # Convertir PIL Image a bytes
+                                import io
+                                img_bytes = io.BytesIO()
+                                img.save(img_bytes, format='PNG')
+                                image_data = img_bytes.getvalue()
+                                model_used = model_name
+                                logger.info(f"[CoverImage] Imagen generada exitosamente con {model_name} (formato PIL)")
+                                break
+                            except Exception as e:
+                                logger.debug(f"[CoverImage] Error al convertir PIL image: {e}")
+                                continue
+                    
+                    if image_data:
+                        break
+                        
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"[CoverImage] Modelo {model_name} falló: {str(e)}")
+                    continue
+            
+            if not image_data:
+                error_msg = f"No se pudo generar imagen con ningún modelo. Último error: {last_error}"
+                logger.error(f"[CoverImage] {error_msg}")
+                raise RuntimeError(error_msg)
+
+            # Decodificar
+            if isinstance(image_data, (bytes, bytearray)):
+                image_bytes = bytes(image_data)
             else:
-                if PILImage is not None:
-                    try:
-                        img = PILImage.open(io.BytesIO(image_bytes))
-                        fmt = (getattr(img, 'format', None) or '').lower()
-                        if fmt:
-                            ext = 'jpg' if fmt == 'jpeg' else fmt
-                    except Exception:
-                        pass
-        except Exception:
+                s = str(image_data).strip()
+                if s.startswith('data:') and ',' in s:
+                    s = s.split(',', 1)[1]
+                image_bytes = base64.b64decode(s)
+
+            # Detectar extensión
             ext = 'png'
+            try:
+                if image_bytes.startswith(b'\x89PNG'):
+                    ext = 'png'
+                elif image_bytes.startswith(b'\xff\xd8\xff'):
+                    ext = 'jpg'
+                elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
+                    ext = 'gif'
+                else:
+                    if PILImage is not None:
+                        try:
+                            img = PILImage.open(io.BytesIO(image_bytes))
+                            fmt = (getattr(img, 'format', None) or '').lower()
+                            if fmt:
+                                ext = 'jpg' if fmt == 'jpeg' else fmt
+                        except Exception:
+                            pass
+            except Exception:
+                ext = 'png'
 
-        output_dir = os.path.join(settings.MEDIA_ROOT, 'generated')
-        os.makedirs(output_dir, exist_ok=True)
-        filename = f"image_{int(time.time())}.{ext}"
-        filepath = os.path.join(output_dir, filename)
-        with open(filepath, 'wb') as fh:
-            fh.write(image_bytes)
+            output_dir = os.path.join(settings.MEDIA_ROOT, 'generated')
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f"image_{int(time.time())}.{ext}"
+            filepath = os.path.join(output_dir, filename)
+            with open(filepath, 'wb') as fh:
+                fh.write(image_bytes)
 
-        # Retornar ruta relativa usando slashes '/' para que sea válida como URL
-        return f"generated/{filename}"
+            logger.info(f"[CoverImage] Imagen guardada exitosamente en {filepath}")
+            # Retornar ruta relativa usando slashes '/' para que sea válida como URL
+            return f"generated/{filename}"
+        except Exception as e:
+            logger.error(f"[CoverImage] Error en _do_generate: {str(e)}", exc_info=True)
+            raise
 
     # Ejecutar con timeout usando ThreadPoolExecutor
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(_do_generate)
-            return fut.result(timeout=timeout_secs)
+            result = fut.result(timeout=timeout_secs)
+            if result:
+                logger.info(f"[CoverImage] Imagen generada exitosamente: {result}")
+            return result
     except concurrent.futures.TimeoutError:
+        logger.error(f"[CoverImage] Timeout al generar imagen después de {timeout_secs} segundos")
         return None
-    except Exception:
+    except RuntimeError as e:
+        # Errores específicos del SDK (no instalado, etc.) - no críticos
+        error_msg = str(e)
+        if "google_genai_sdk_not_installed" in error_msg or "genai_client_unavailable" in error_msg:
+            logger.warning(f"[CoverImage] SDK no disponible, saltando generación de imagen: {error_msg}")
+            logger.warning("[CoverImage] Para habilitar generación de imágenes, instala: pip install google-genai")
+        else:
+            logger.error(f"[CoverImage] Error de runtime: {error_msg}")
+        return None
+    except Exception as e:
+        logger.error(f"[CoverImage] Error inesperado al generar imagen: {str(e)}", exc_info=True)
         return None
 
 @api_view(['POST'])
@@ -1277,6 +1408,93 @@ def gemini_generate_image(request):
         return JsonResponse({'error': 'genai_unavailable', 'message': str(e)}, status=503)
     except Exception as e:
         return JsonResponse({'error': 'generate_failed', 'message': str(e)}, status=500)
+
+
+@api_view(['POST'])
+def regenerate_cover_image(request, session_id):
+    """
+    Regenera la imagen de portada de una sesión.
+    Límite: máximo 3 regeneraciones por sesión.
+    Mantiene historial de últimas 3 imágenes para poder revertir.
+    
+    POST /api/sessions/<session_id>/regenerate-cover/
+    """
+    MAX_REGENERATIONS = 3
+    
+    try:
+        session = GenerationSession.objects.get(id=session_id)
+    except GenerationSession.DoesNotExist:
+        return JsonResponse({'error': 'session_not_found'}, status=404)
+    
+    # Validar límite de regeneraciones
+    current_count = getattr(session, 'cover_regeneration_count', 0) or 0
+    if current_count >= MAX_REGENERATIONS:
+        return JsonResponse({
+            'error': 'regeneration_limit_reached',
+            'message': f'Se ha alcanzado el límite de {MAX_REGENERATIONS} regeneraciones por sesión',
+            'count': current_count,
+            'max': MAX_REGENERATIONS
+        }, status=400)
+    
+    # Construir prompt basado en el tema y dificultad
+    topic = session.topic or 'Quiz'
+    difficulty = session.difficulty or 'Media'
+    prompt_for_image = f"{topic} - {difficulty} quiz cover"
+    
+    # Generar nueva imagen con timeout de 15 segundos
+    new_image_path = generate_cover_image(prompt_for_image, size=1024, timeout_secs=15)
+    
+    if not new_image_path:
+        return JsonResponse({
+            'error': 'image_generation_failed',
+            'message': 'No se pudo generar la nueva imagen. Intenta de nuevo más tarde.'
+        }, status=500)
+    
+    # Obtener historial actual (máximo 3 imágenes)
+    history = getattr(session, 'cover_image_history', []) or []
+    if not isinstance(history, list):
+        history = []
+    
+    # Agregar imagen actual al historial (si existe) antes de actualizar
+    current_image = getattr(session, 'cover_image', '') or ''
+    if current_image:
+        # Insertar al inicio (más reciente primero)
+        history.insert(0, current_image)
+        # Mantener solo las últimas 3
+        history = history[:3]
+    
+    # Construir URL absoluta para la nueva imagen
+    try:
+        proxy_url = request.build_absolute_uri(f"/api/media/proxy/{new_image_path}")
+    except Exception:
+        proxy_url = f"{settings.MEDIA_URL}{new_image_path}"
+    
+    # Actualizar sesión
+    session.cover_image = new_image_path
+    session.cover_regeneration_count = current_count + 1
+    session.cover_image_history = history
+    session.save(update_fields=['cover_image', 'cover_regeneration_count', 'cover_image_history'])
+    
+    # Construir historial con URLs absolutas para el frontend
+    history_urls = []
+    for img_path in history:
+        try:
+            img_url = request.build_absolute_uri(f"/api/media/proxy/{img_path}")
+        except Exception:
+            img_url = f"{settings.MEDIA_URL}{img_path}"
+        history_urls.append({
+            'path': img_path,
+            'url': img_url
+        })
+    
+    return JsonResponse({
+        'success': True,
+        'image_url': proxy_url,
+        'image_path': new_image_path,
+        'count': session.cover_regeneration_count,
+        'remaining': MAX_REGENERATIONS - session.cover_regeneration_count,
+        'history': history_urls
+    })
 
 
 def guardarLocal(resp):

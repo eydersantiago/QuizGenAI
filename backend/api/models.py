@@ -33,6 +33,10 @@ class GenerationSession(models.Model):
     latest_preview = JSONField(default=list, blank=True)
     # Imagen de portada generada por Gemini (ruta relativa dentro de MEDIA_URL/generated)
     cover_image = models.CharField(max_length=500, blank=True, default='', help_text="Ruta relativa a la imagen de portada generada")
+    # Contador de regeneraciones de portada (máximo 3 por sesión)
+    cover_regeneration_count = models.PositiveIntegerField(default=0, help_text="Número de regeneraciones de portada realizadas")
+    # Historial de últimas 3 imágenes de portada generadas (para poder revertir)
+    cover_image_history = JSONField(default=list, blank=True, help_text="Lista de rutas de las últimas 3 imágenes generadas, más reciente primero")
 
 
     class Meta:

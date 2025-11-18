@@ -1,0 +1,116 @@
+/* ===========================
+   CoverImageRegenerator - Estilos
+   =========================== */
+
+.cover-regenerator-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.cover-regenerate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3);
+}
+
+.cover-regenerate-btn:hover:not(.disabled):not(.loading) {
+  background: linear-gradient(135deg, #6d28d9 0%, #9333ea 100%);
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+  transform: translateY(-1px);
+}
+
+.cover-regenerate-btn:active:not(.disabled):not(.loading) {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.3);
+}
+
+.cover-regenerate-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
+  box-shadow: none;
+}
+
+.cover-regenerate-btn.loading {
+  cursor: wait;
+  opacity: 0.8;
+}
+
+.cover-regenerate-btn .spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.regeneration-counter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  color: #d5dbff;
+}
+
+.counter-label {
+  opacity: 0.8;
+}
+
+.counter-value {
+  font-weight: 600;
+  color: #a855f7;
+  padding: 0.25rem 0.5rem;
+  background: rgba(168, 85, 247, 0.15);
+  border-radius: 4px;
+}
+
+.counter-value.zero {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.regeneration-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #fca5a5;
+  font-size: 0.8125rem;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .cover-regenerator-container {
+    width: 100%;
+  }
+
+  .cover-regenerate-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .regeneration-counter {
+    font-size: 0.75rem;
+  }
+}
+
