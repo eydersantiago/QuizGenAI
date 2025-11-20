@@ -4,6 +4,8 @@ import os
 import sys
 from dotenv import load_dotenv
 import dj_database_url
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
 
 # --- Mitigar conflictos por agentes de Azure (OpenTelemetry) ---
 # Evita que /agents/python/typing_extensions.py sombree el del venv
@@ -12,6 +14,17 @@ os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")  # opcional en local
+
+# --- Observabilidad / logging ---
+sentry_dsn = os.getenv("SENTRY_DSN")
+sentry_sdk.init(
+    dsn=sentry_dsn,
+    integrations=[DjangoIntegration()],
+    traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+    profiles_sample_rate=float(os.getenv("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
+    send_default_pii=False,
+    enable_tracing=bool(os.getenv("SENTRY_ENABLE_TRACING", "false").lower() == "true"),
+)
 
 # Helper para leer listas desde variables de entorno (coma-separadas)
 def csv_env(name, default=""):
@@ -138,3 +151,33 @@ if not DEBUG:
     # SECURE_HSTS_SECONDS = 31536000
     # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     # SECURE_HSTS_PRELOAD = True
+
+
+# --- Logging estructurado ---
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "api": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": True,
+        },
+    },
+}

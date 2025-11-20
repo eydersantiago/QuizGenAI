@@ -573,6 +573,7 @@ export default function QuizPlay(props) {
   const [loading, setLoading] = useState(true);
   const [warning, setWarning] = useState(null);
   const [error, setError] = useState(null);
+  const [llmStatus, setLlmStatus] = useState(null);
 
   // Preguntas "vigentes" que se muestran
   const [questions, setQuestions] = useState([]);
@@ -1376,6 +1377,13 @@ export default function QuizPlay(props) {
         const fallback = (fbHeader ?? (data.fallback_used ? "1" : "0")) === "1";
 
         console.log("[LLM][QuizPlay] requested:", provider, "used:", used, "fallback:", fallback);
+        setLlmStatus({
+          action: "carga inicial",
+          requested: provider,
+          effective: used,
+          fallback,
+          timestamp: new Date(),
+        });
         // --------------------------------------------
 
         if (!resp.ok)
@@ -1447,6 +1455,13 @@ export default function QuizPlay(props) {
       const used = usedHeader || data.source || "(desconocido)";
       const fallback = (fbHeader ?? (data.fallback_used ? "1" : "0")) === "1";
       console.log("[LLM][Regenerate] requested:", provider, "used:", used, "fallback:", fallback);
+      setLlmStatus({
+        action: `regenerar #${idx + 1}`,
+        requested: provider,
+        effective: used,
+        fallback,
+        timestamp: new Date(),
+      });
 
       if (!resp.ok) throw new Error(data?.error || "No se pudo regenerar");
 
@@ -2638,6 +2653,18 @@ export default function QuizPlay(props) {
             {warning && <p className="qp-warning">⚠️ {warning}</p>}
             {isLoadedQuiz && (
               <p className="qp-saved-info">💾 Quiz guardado - Se guarda automáticamente tu progreso</p>
+            )}
+
+            {llmStatus && (
+              <div className="llm-status-banner" aria-live="polite">
+                <div>
+                  <strong>Proveedor efectivo:</strong> {llmStatus.effective}
+                  {llmStatus.fallback && " (fallback activado)"}
+                </div>
+                <div className="llm-status-meta">
+                  Solicitado: {llmStatus.requested} · Acción: {llmStatus.action} · {llmStatus.timestamp.toLocaleTimeString()}
+                </div>
+              </div>
             )}
 
             {/* Indicador de preguntas marcadas */}

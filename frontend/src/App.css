@@ -211,3 +211,24 @@ a:hover { text-decoration: underline; }
     pointer-events: auto;
   }
 }
+
+/* ====== Estado del proveedor efectivo (llm-status) ====== */
+.llm-status-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #eef2ff, #f8fafc);
+  border: 1px solid #c7d2fe;
+  color: #111827;
+  display: grid;
+  gap: 4px;
+}
+
+.llm-status-banner strong {
+  color: #312e81;
+}
+
+.llm-status-meta {
+  font-size: 12px;
+  color: #4b5563;
+}

@@ -175,6 +175,7 @@ export default function QuizForm(props) {
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
   const [preview, setPreview] = useState(null);
+  const [llmStatus, setLlmStatus] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const navigate = useNavigate();
@@ -386,13 +387,21 @@ export default function QuizForm(props) {
       )
     );
     const json = await res.json();
-
     const usedHeader = res.headers.get("x-llm-effective-provider");
     const fbHeader = res.headers.get("x-llm-fallback");
 
     const used = usedHeader || json.source;           // respaldo al body
     const fallback = (fbHeader ?? (json.fallback_used ? "1" : "0")) === "1";
 
+    const status = {
+      action: "preview",
+      requested: provider,
+      effective: used || provider,
+      fallback,
+      timestamp: new Date(),
+    };
+
+    setLlmStatus(status);
     console.log("[LLM] requested:", provider, "used:", used, "fallback:", fallback);
     if (res.ok) setPreview(json.preview);
     else Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
@@ -422,6 +431,12 @@ export default function QuizForm(props) {
       try {
         json = await res.json();
       } catch (_) {}
+
+      const usedHeader = res.headers.get("x-llm-effective-provider");
+      const fbHeader = res.headers.get("x-llm-fallback");
+      const used = usedHeader || json?.source;
+      const fallback = (fbHeader ?? (json?.fallback_used ? "1" : "0")) === "1";
+      setLlmStatus({ action: "crear sesión", requested: provider, effective: used || provider, fallback, timestamp: new Date() });
 
       if (!res.ok) {
         Swal.fire("Error", json?.error || "No se pudo crear la sesión", "error");
@@ -541,7 +556,7 @@ export default function QuizForm(props) {
       {/* Dificultad + Selector de proveedor */}
       <div className="flex items-center justify-between mt-4 mb-1">
         <label className="block font-bold text-black-700">Dificultad</label>
-        {/* <ModelProviderSelect compact /> */}
+        <ModelProviderSelect compact />
       </div>
       <select
         value={difficulty}
@@ -552,6 +567,18 @@ export default function QuizForm(props) {
         <option>Media</option>
         <option>Difícil</option>
       </select>
+
+      {llmStatus && (
+        <div className="llm-status-banner" aria-live="polite">
+          <div>
+            <strong>Proveedor efectivo:</strong> {llmStatus.effective}
+            {llmStatus.fallback && " (fallback activado)"}
+          </div>
+          <div className="llm-status-meta">
+            Solicitado: {llmStatus.requested} · Acción: {llmStatus.action} · {llmStatus.timestamp.toLocaleTimeString()}
+          </div>
+        </div>
+      )}
 
       {/* Tipos de pregunta */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-6">

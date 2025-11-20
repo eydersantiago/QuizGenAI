@@ -27,6 +27,7 @@ router = DefaultRouter()
 
 urlpatterns = [
     path("health/", views.health_check, name="health_check"),
+    path("health/providers/", views.providers_health, name="providers_health"),
     
     path("sessions/", views.sessions, name="sessions"),
     path("preview/", views.preview_questions, name="preview_questions"),

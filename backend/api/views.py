@@ -1,7 +1,9 @@
 # api/views.py
-import os
 import json
+import logging
+import os
 import re
+import time
 import uuid
 from dotenv import load_dotenv
 from django.http import JsonResponse
@@ -9,6 +11,8 @@ from rest_framework.decorators import api_view
 from rest_framework import status
 from django.utils import timezone
 import requests  # <— NUEVO
+
+logger = logging.getLogger(__name__)
 
 
 #import google.generativeai as genai
@@ -29,6 +33,33 @@ def health_check(request):
         'timestamp': timezone.now().isoformat()
     })
 
+
+@api_view(['GET'])
+def providers_health(request):
+    """Verifica configuración de proveedores IA y fallback local."""
+
+    def _status(name: str, env_keys=None, optional=False):
+        env_keys = env_keys or []
+        missing = [k for k in env_keys if not os.getenv(k)]
+        if missing and not optional:
+            return {"name": name, "status": "degraded", "missing_env": missing}
+        if missing and optional:
+            return {"name": name, "status": "skipped", "missing_env": missing}
+        return {"name": name, "status": "ok"}
+
+    providers = [
+        _status("gemini", ["GEMINI_API_KEY"]),
+        _status("perplexity", ["PPLX_API_KEY"]),
+        _status(SECONDARY_PROVIDER, [], optional=True) | {"notes": "placeholder listo"},
+    ]
+
+    return JsonResponse({
+        "status": "ok",
+        "providers": providers,
+        "retry_strategy": {"attempts": 2, "mode": "exponential_backoff"},
+        "timestamp": timezone.now().isoformat(),
+    })
+
 # =========================================================
 # Utilidades generales
 # =========================================================
@@ -45,6 +76,33 @@ def _extract_json(raw: str) -> dict:
             raise ValueError("No se encontró JSON en la respuesta")
         raw = m.group(0)
     return json.loads(raw)
+
+
+def _retry_with_backoff(fn, *args, attempts: int = 2, base_delay: float = 0.75, **kwargs):
+    """Ejecuta `fn` con reintentos exponenciales simples.
+
+    Intenta `attempts` veces (por defecto 2). El tiempo de espera usa backoff
+    exponencial: base_delay, base_delay*2, etc.
+    """
+    last_exc = None
+    for idx in range(attempts):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 (registramos y propagamos)
+            last_exc = exc
+            if idx >= attempts - 1:
+                break
+            delay = base_delay * (2 ** idx)
+            logger.warning(
+                "Intento %s/%s falló (%s). Reintentando en %.2fs",
+                idx + 1,
+                attempts,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+    if last_exc:
+        raise last_exc
 
 
 def _configure_gemini():
@@ -90,18 +148,19 @@ def _pplx_call_json(prompt: str, max_tokens: int = 1200, temperature: float = 0.
             {"role": "user", "content": prompt},
         ],
     }
-    r = requests.post(PPLX_API, headers=headers, json=body, timeout=60)
-    if r.status_code != 200:
-        # propagar texto de error, útil para detectar 'no credits'
-        raise RuntimeError(f"pplx_http_{r.status_code}: {r.text}")
+    def _do_call():
+        r = requests.post(PPLX_API, headers=headers, json=body, timeout=60)
+        if r.status_code != 200:
+            # propagar texto de error, útil para detectar 'no credits'
+            raise RuntimeError(f"pplx_http_{r.status_code}: {r.text}")
 
-    data = r.json()
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except Exception:
-        raise RuntimeError("pplx_invalid_response")
+        data = r.json()
+        try:
+            return data["choices"][0]["message"]["content"]
+        except Exception:
+            raise RuntimeError("pplx_invalid_response")
 
-    return content  # cadena con JSON (según prompt)
+    return _retry_with_backoff(_do_call)
 
 
 
@@ -389,6 +448,12 @@ def _json_schema_one():
         }
     }
 
+
+def _gemini_generate_with_retry(model, prompt: str) -> str:
+    return _retry_with_backoff(
+        lambda: (model.generate_content(prompt).text or "").strip()
+    )
+
 def generate_questions_with_gemini(topic, difficulty, types, counts):
     # Configurar e importar aquí (perezoso)
     genai = _configure_gemini()
@@ -422,8 +487,7 @@ Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
             top_k=64,
         )
     )
-    resp = model.generate_content(prompt)
-    raw = (resp.text or "").strip()
+    raw = _gemini_generate_with_retry(model, prompt)
     data = json.loads(raw)
 
     if "questions" not in data or not isinstance(data["questions"], list):
@@ -500,8 +564,7 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
             top_k=64,
         )
     )
-    resp = model.generate_content(prompt)
-    raw = (resp.text or "").strip()
+    raw = _gemini_generate_with_retry(model, prompt)
     data = json.loads(raw)
 
     # Normalizaciones mínimas
@@ -524,13 +587,68 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
     return data
 
 
+SECONDARY_PROVIDER = "stability_placeholder"
+
+
+def _build_placeholder_question(topic: str, difficulty: str, qtype: str, index: int) -> dict:
+    base_question = (
+        "¿Cuál es el propósito principal de un bloque try/except en Python?"
+        if qtype == "mcq"
+        else "Explica brevemente qué es la complejidad temporal Big-O."
+    )
+    if qtype == "vf":
+        base_question = "Las listas en Python son inmutables."
+
+    if qtype == "mcq":
+        return {
+            "type": "mcq",
+            "question": f"[{difficulty}] {base_question} ({topic}) #{index}",
+            "options": [
+                "A) Manejar errores durante la ejecución",
+                "B) Declarar variables globales",
+                "C) Optimizar el uso de memoria",
+                "D) Ejecutar código asíncrono",
+            ],
+            "answer": "A",
+            "explanation": "Los bloques try/except permiten capturar excepciones y evitar fallos abruptos.",
+        }
+    if qtype == "vf":
+        return {
+            "type": "vf",
+            "question": f"[{difficulty}] {base_question} ({topic}) #{index}",
+            "answer": "Falso",
+            "explanation": "Las listas son mutables; las tuplas son las estructuras inmutables estándar.",
+        }
+    return {
+        "type": "short",
+        "question": f"[{difficulty}] {base_question} ({topic}) #{index}",
+        "answer": "Medida del crecimiento del tiempo de ejecución en función del tamaño de entrada.",
+        "explanation": "Big-O describe cómo escalan los algoritmos; es un indicador asintótico.",
+    }
+
+
+def generate_questions_with_secondary(topic, difficulty, types, counts):
+    logger.info("Usando proveedor secundario %s", SECONDARY_PROVIDER)
+    questions = []
+    for qtype in types:
+        total = int(counts.get(qtype, 0))
+        for idx in range(1, total + 1):
+            questions.append(_build_placeholder_question(topic, difficulty, qtype, idx))
+    return questions
+
+
+def regenerate_question_with_secondary(topic, difficulty, qtype, base_question=None, avoid_phrases=None):
+    logger.info("Regenerando con proveedor secundario %s", SECONDARY_PROVIDER)
+    return _build_placeholder_question(topic, difficulty, qtype, 1)
+
+
 
 def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
     """
     Devuelve (questions, provider_used, fallback_used, errors_map)
     Si ambos fallan por créditos -> levanta RuntimeError('no_providers_available')
     """
-    order = [preferred, "gemini" if preferred == "perplexity" else "perplexity"]
+    order = [preferred, "gemini" if preferred == "perplexity" else "perplexity", SECONDARY_PROVIDER]
     errors = {}
     fallback_used = False
 
@@ -538,9 +656,11 @@ def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
         try:
             if prov == "gemini":
                 qs = generate_questions_with_gemini(topic, difficulty, types, counts)
-            else:
+            elif prov == "perplexity":
                 qs = generate_questions_with_pplx(topic, difficulty, types, counts)
-            return qs, prov, fallback_used, errors
+            else:
+                qs = generate_questions_with_secondary(topic, difficulty, types, counts)
+            return qs, prov, fallback_used or i > 0, errors
         except Exception as e:
             msg = str(e)
             errors[prov] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
@@ -559,7 +679,7 @@ def _regenerate_with_fallback(topic, difficulty, qtype, base_q, avoid_phrases, p
     """
     Devuelve (question, provider_used, fallback_used, errors_map)
     """
-    order = [preferred, "gemini" if preferred == "perplexity" else "perplexity"]
+    order = [preferred, "gemini" if preferred == "perplexity" else "perplexity", SECONDARY_PROVIDER]
     errors = {}
     fallback_used = False
 
@@ -567,9 +687,11 @@ def _regenerate_with_fallback(topic, difficulty, qtype, base_q, avoid_phrases, p
         try:
             if prov == "gemini":
                 q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases)
-            else:
+            elif prov == "perplexity":
                 q = regenerate_question_with_pplx(topic, difficulty, qtype, base_q, avoid_phrases)
-            return q, prov, fallback_used, errors
+            else:
+                q = regenerate_question_with_secondary(topic, difficulty, qtype, base_q, avoid_phrases)
+            return q, prov, fallback_used or i > 0, errors
         except Exception as e:
             msg = str(e)
             errors[prov] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}

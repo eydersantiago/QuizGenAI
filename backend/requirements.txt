@@ -6,6 +6,7 @@ django-cors-headers==4.4.0
 psycopg2-binary==2.9.10
 dj-database-url==2.3.0
 python-dotenv==1.1.1
+sentry-sdk==2.19.2
 
 # (Opcionales tuyos, si los usas)
 google-generativeai==0.8.5
