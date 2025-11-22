@@ -1171,8 +1171,14 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
     def _do_generate():
         genai = _configure_gemini()
         model_obj = genai.GenerativeModel('gemini-2.5-flash-image')
-        # Ajustar prompt para tamaño y estilo educativo
-        p = f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. Estilo claro, educativo, colores brillantes, poco texto."
+        # Ajustar prompt para tamaño y estilo educativo/serio (diagramas técnicos, no arte)
+        p = (
+            f"Genera una imagen de portada {size}x{size} para un cuestionario sobre: {prompt}. "
+            "Estilo: técnico y serio (diagramas, esquemas o plots educativos), no artístico ni pictórico. "
+            "Evita ilustraciones creativas o decorativas. Usa colores sobrios y contraste suficiente. "
+            "No incluyas texto dentro de la imagen excepto etiquetas breves en diagramas (p.ej. ejes de una gráfica). "
+            "La imagen debe ser clara, didáctica y directamente relacionable con el tema mencionado."
+        )
         resp = model_obj.generate_content(p)
 
         # Extraer inline data (robusto)
@@ -1268,10 +1274,14 @@ def attach_images_to_questions(topic, image_counts, questions, session=None, req
                 continue
             # Construir prompt específico para que la imagen sea la base de la pregunta
             q_text = (q.get('question') or '').strip()
+            # Prompt orientado a diagramas técnicos/plots para que la imagen permita formular
+            # la pregunta sobre ella (no solo complementaria).
             prompt = (
-                f"Genera una imagen educativa y clara para acompañar la siguiente pregunta de tema '{topic}': \"{q_text}\". "
-                "La pregunta debe poder formularse sobre la imagen generada. Evita incluir texto dentro de la imagen. "
-                "Estilo: ilustrativo, colores claros, aspecto didáctico, sin logos ni marcas."
+                f"Genera una imagen técnica y didáctica para acompañar la siguiente pregunta sobre '{topic}': \"{q_text}\". "
+                "La imagen debe ser un diagrama, esquema o gráfico legible que permita responder la pregunta Observa la imagen y responde. "
+                "Requisitos: estilo serio/técnico (no artístico), evita elementos decorativos; si es un gráfico, dibuja ejes y curvas claros; "
+                "si es un diagrama de estructura (p.ej. FIFO), muestra nodos/colas/etiquetas mínimas sin texto expansivo. "
+                "No incluyas texto explicativo extenso dentro de la imagen; permite que la pregunta se formule sobre lo que se observa."
             )
             try:
                 filepath_rel = generate_cover_image(prompt, size=size, timeout_secs=timeout_secs)
@@ -1285,8 +1295,76 @@ def attach_images_to_questions(topic, image_counts, questions, session=None, req
                     q['image_url'] = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
                 except Exception:
                     q['image_url'] = f"{settings.MEDIA_URL}{filepath_rel}"
+            # Intentar regenerar la pregunta para que sea específicamente SOBRE la imagen generada
+            try:
+                new_q = generate_question_about_image(topic, getattr(session, 'difficulty', 'Fácil'), q.get('type', 'mcq'), prompt)
+                if new_q and isinstance(new_q, dict):
+                    # Conservar campos image_rel/image_url y originalIndex si existían
+                    orig_index = q.get('originalIndex')
+                    q.clear()
+                    q.update(new_q)
+                    if orig_index is not None:
+                        q['originalIndex'] = orig_index
+                    q['image_rel'] = filepath_rel
+                    if request and not q.get('image_url'):
+                        try:
+                            q['image_url'] = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
+                        except Exception:
+                            q['image_url'] = f"{settings.MEDIA_URL}{filepath_rel}"
+            except Exception:
+                # No interrumpir el flujo por fallo en regeneración de la pregunta
+                pass
             placed += 1
     return
+
+
+def generate_question_about_image(topic, difficulty, qtype, image_prompt):
+    """Genera una pregunta (JSON) cuyo enunciado sea directamente sobre la imagen descrita por image_prompt.
+    Devuelve un dict compatible con _json_schema_one() o None si falla.
+    """
+    try:
+        genai = _configure_gemini()
+        schema = _json_schema_one()
+        rules = (
+            "Reglas: La pregunta debe formularse SOBRE la imagen descrita; no sea complementaria. "
+            "El enunciado debe comenzar indicando 'Observa la imagen:' si procede. "
+            "type=mcq -> 4 opciones A..D; answer ∈ {A,B,C,D}. type=vf -> Verdadero/Falso. "
+            "Responde SOLO con JSON válido al schema."
+        )
+        prompt = f"Genera 1 pregunta de tipo '{qtype}' sobre la siguiente descripción de imagen: {image_prompt}. {rules}"
+
+        model = genai.GenerativeModel(
+            GEMINI_MODEL,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=0.9,
+                top_p=0.95,
+                top_k=64,
+            )
+        )
+        resp = model.generate_content(prompt)
+        raw = (resp.text or "").strip()
+        data = json.loads(raw)
+        # Normalizaciones mínimas (reusar lógica de regenerate_question_with_gemini)
+        if data.get("type") != qtype:
+            data["type"] = qtype
+        if qtype == "mcq":
+            opts = data.get("options", [])
+            if not isinstance(opts, list) or len(opts) != 4:
+                data["options"] = ["A) Opción 1", "B) Opción 2", "C) Opción 3", "D) Opción 4"]
+                data["answer"] = "A"
+            else:
+                ans = str(data.get("answer", "A")).strip().upper()[:1]
+                if ans not in ("A", "B", "C", "D"):
+                    data["answer"] = "A"
+        if qtype == "vf":
+            ans = str(data.get("answer", "")).strip().capitalize()
+            if ans not in ("Verdadero", "Falso"):
+                data["answer"] = "Verdadero"
+        return data
+    except Exception:
+        return None
 
 @api_view(['POST'])
 def gemini_generate_image(request):
