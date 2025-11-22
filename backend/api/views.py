@@ -4,6 +4,8 @@ import json
 import re
 import uuid
 import logging
+import hashlib
+from datetime import timedelta
 from dotenv import load_dotenv
 from django.http import JsonResponse, HttpResponse, FileResponse
 from rest_framework.decorators import api_view
@@ -11,7 +13,7 @@ from rest_framework import status
 from django.utils import timezone
 import base64
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple, Union
 import concurrent.futures
 import mimetypes
 from django.http import Http404
@@ -25,9 +27,133 @@ logger = logging.getLogger(__name__)
 
 
 #import google.generativeai as genai
-from .models import GenerationSession, RegenerationLog
+from .models import GenerationSession, RegenerationLog, ImagePromptCache, ImageGenerationLog
 
 load_dotenv()
+
+IMAGE_DAILY_LIMIT = 10
+
+
+def _user_and_identifier(request):
+    user = getattr(request, "user", None)
+    if user and user.is_authenticated:
+        return user, f"user:{user.id}"
+
+    forwarded = (request.META.get("HTTP_X_FORWARDED_FOR", "") or "").split(",")[0].strip()
+    ip_addr = forwarded or request.META.get("REMOTE_ADDR", "unknown") or "unknown"
+    return None, f"anon:{ip_addr}"
+
+
+def _normalize_prompt(prompt: str) -> str:
+    return " ".join((prompt or "").strip().lower().split())
+
+
+def _prompt_hash(prompt: str) -> str:
+    return hashlib.sha256(_normalize_prompt(prompt).encode("utf-8")).hexdigest()
+
+
+def _image_rate_limit_status(user_identifier: str) -> Dict[str, int]:
+    now = timezone.now()
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    generated_today = ImageGenerationLog.objects.filter(
+        user_identifier=user_identifier,
+        created_at__gte=start_of_day,
+        reused_from_cache=False,
+    ).count()
+    remaining = max(0, IMAGE_DAILY_LIMIT - generated_today)
+    return {"used": generated_today, "remaining": remaining}
+
+
+def _get_cached_image(user_identifier: str, prompt: str) -> Optional[ImagePromptCache]:
+    prompt_hash = _prompt_hash(prompt)
+    now = timezone.now()
+    cached = (
+        ImagePromptCache.objects.filter(
+            user_identifier=user_identifier,
+            prompt_hash=prompt_hash,
+            expires_at__gte=now,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    if not cached:
+        return None
+
+    fullpath = os.path.join(settings.MEDIA_ROOT, cached.image_path)
+    if not os.path.exists(fullpath):
+        return None
+    return cached
+
+
+def _save_cache_entry(user, user_identifier: str, prompt: str, image_path: str):
+    prompt_hash = _prompt_hash(prompt)
+    expires_at = timezone.now() + timedelta(hours=24)
+    ImagePromptCache.objects.update_or_create(
+        user_identifier=user_identifier,
+        prompt_hash=prompt_hash,
+        defaults={
+            "user": user,
+            "prompt": prompt,
+            "image_path": image_path,
+            "expires_at": expires_at,
+        },
+    )
+    return expires_at
+
+
+def _log_image_usage(
+    *,
+    user,
+    user_identifier: str,
+    prompt: str,
+    provider: str,
+    image_path: str,
+    reused_from_cache: bool,
+    estimated_cost_usd: Optional[float] = None,
+):
+    try:
+        ImageGenerationLog.objects.create(
+            user=user,
+            user_identifier=user_identifier,
+            prompt=prompt,
+            provider=provider,
+            image_path=image_path,
+            reused_from_cache=reused_from_cache,
+            estimated_cost_usd=estimated_cost_usd,
+        )
+    except Exception as e:  # noqa: PERF203 - mantener logging de auditoría
+        logger.warning("[CoverImage] No se pudo registrar uso de imagen: %s", e)
+
+
+def _build_image_response(filepath_rel: str, request, *, remaining: int, reused: bool = False, cache_expires=None):
+    fullpath = os.path.join(settings.MEDIA_ROOT, filepath_rel)
+    ext = os.path.splitext(fullpath)[1].lstrip('.')
+    ct = 'application/octet-stream'
+    if ext in ('png', 'gif'):
+        ct = f'image/{ext}'
+    elif ext in ('jpg', 'jpeg'):
+        ct = 'image/jpeg'
+    elif ext != 'bin':
+        ct = f'image/{ext}'
+
+    fh = open(fullpath, 'rb')
+    response = FileResponse(fh, content_type=ct)
+    response['Content-Length'] = str(os.path.getsize(fullpath))
+    response['Content-Disposition'] = f'inline; filename="{os.path.basename(fullpath)}"'
+    try:
+        proxy_url = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
+        response['X-Cover-Image-Rel'] = filepath_rel
+        response['X-Cover-Image-Url'] = proxy_url
+    except Exception:
+        pass
+
+    response['X-RateLimit-Limit'] = str(IMAGE_DAILY_LIMIT)
+    response['X-RateLimit-Remaining'] = str(max(0, remaining))
+    response['X-Image-Reused'] = 'true' if reused else 'false'
+    if cache_expires:
+        response['X-Cache-Expires'] = cache_expires.isoformat()
+    return response
 
 # =========================================================
 # Endpoint de salud para diagnóstico
@@ -1422,7 +1548,8 @@ def generate_cover_image(
     preferred_provider: str = "gemini",
     size: int = 1024,
     timeout_secs: int = 10,  # ahora mismo no lo usamos, pero lo dejamos en la firma
-) -> Optional[str]:
+    return_provider: bool = False,
+) -> Union[Optional[str], Tuple[Optional[str], Optional[str]]]:
     """
     Genera una imagen de portada y devuelve la ruta relativa dentro de MEDIA_ROOT
     (ej: 'generated/image_x.png').
@@ -1440,9 +1567,13 @@ def generate_cover_image(
     for provider in order:
         try:
             if provider == "gemini":
-                return _generate_cover_image_with_gemini(prompt, size)
+                image_path = _generate_cover_image_with_gemini(prompt, size)
             else:
-                return _generate_cover_image_with_openai(prompt, size)
+                image_path = _generate_cover_image_with_openai(prompt, size)
+
+            if return_provider:
+                return image_path, provider
+            return image_path
         except Exception as e:
             msg = str(e)
             errors[provider] = msg
@@ -1463,9 +1594,72 @@ def gemini_generate_image(request):
     if not prompt:
         return JsonResponse({'error': 'prompt required'}, status=400)
 
+    user, user_identifier = _user_and_identifier(request)
+    cached = _get_cached_image(user_identifier, prompt)
+    if cached:
+        logger.info(f"[CoverImage] Devolviendo imagen cacheada para {user_identifier}")
+        _log_image_usage(
+            user=user,
+            user_identifier=user_identifier,
+            prompt=prompt,
+            provider="cache",
+            image_path=cached.image_path,
+            reused_from_cache=True,
+            estimated_cost_usd=0.0,
+        )
+        status_info = _image_rate_limit_status(user_identifier)
+
+        # Si se proporcionó session_id, persistir la ruta relativa en la sesión (no sobrescribir)
+        if session_id:
+            try:
+                ss = GenerationSession.objects.get(id=session_id)
+                if not getattr(ss, 'cover_image', ''):
+                    ss.cover_image = cached.image_path
+                    ss.save(update_fields=['cover_image'])
+            except Exception:
+                pass
+
+        response = _build_image_response(
+            cached.image_path,
+            request,
+            remaining=status_info.get("remaining", IMAGE_DAILY_LIMIT),
+            reused=True,
+            cache_expires=cached.expires_at,
+        )
+        return response
+
+    status_info = _image_rate_limit_status(user_identifier)
+    if status_info['remaining'] <= 0:
+        logger.warning(
+            f"[CoverImage] Límite diario alcanzado para {user_identifier}: {status_info['used']} / {IMAGE_DAILY_LIMIT}"
+        )
+        resp = JsonResponse({
+            'error': 'rate_limit_exceeded',
+            'message': 'Has alcanzado el límite diario de generación de imágenes (10). Intenta mañana o reutiliza prompts recientes.'
+        }, status=429)
+        resp['X-RateLimit-Limit'] = str(IMAGE_DAILY_LIMIT)
+        resp['X-RateLimit-Remaining'] = '0'
+        return resp
+
+    if status_info['remaining'] <= 2:
+        logger.warning(
+            f"[CoverImage] Advertencia: {user_identifier} cerca del límite de imágenes. Restantes: {status_info['remaining']}"
+        )
+
     try:
         # Usar helper que encapsula la generación con timeout
-        filepath_rel = generate_cover_image(prompt, preferred_provider=preferred, size=1024, timeout_secs=10)
+        result = generate_cover_image(
+            prompt,
+            preferred_provider=preferred,
+            size=1024,
+            timeout_secs=10,
+            return_provider=True,
+        )
+        if isinstance(result, tuple):
+            filepath_rel, provider_used = result
+        else:
+            filepath_rel, provider_used = result, preferred
+
         if not filepath_rel:
             # fallback: devolver placeholder (si existe en MEDIA_ROOT/static o similar)
             placeholder = os.path.join(settings.MEDIA_ROOT, 'generated', 'placeholder.png')
@@ -1474,19 +1668,10 @@ def gemini_generate_image(request):
                 response = FileResponse(fh, content_type='image/png')
                 response['Content-Length'] = str(os.path.getsize(placeholder))
                 response['Content-Disposition'] = f'inline; filename="placeholder.png"'
+                response['X-RateLimit-Limit'] = str(IMAGE_DAILY_LIMIT)
+                response['X-RateLimit-Remaining'] = str(status_info.get("remaining", 0))
                 return response
             return JsonResponse({'error': 'image_generation_failed'}, status=500)
-
-        # filepath_rel es algo como 'generated/image_123.png'
-        fullpath = os.path.join(settings.MEDIA_ROOT, filepath_rel)
-        ext = os.path.splitext(fullpath)[1].lstrip('.')
-        ct = 'application/octet-stream'
-        if ext in ('png', 'gif'):
-            ct = f'image/{ext}'
-        elif ext in ('jpg', 'jpeg'):
-            ct = 'image/jpeg'
-        elif ext != 'bin':
-            ct = f'image/{ext}'
 
         # Si se proporcionó session_id, persistir la ruta relativa en la sesión (no sobrescribir)
         if session_id:
@@ -1499,18 +1684,23 @@ def gemini_generate_image(request):
                 # No bloquear la entrega de la imagen por fallo al persistir
                 pass
 
-        fh = open(fullpath, 'rb')
-        response = FileResponse(fh, content_type=ct)
-        response['Content-Length'] = str(os.path.getsize(fullpath))
-        response['Content-Disposition'] = f'inline; filename="{os.path.basename(fullpath)}"'
-        # Exponer la ruta relativa y la URL proxy en cabeceras para que el frontend sepa la ubicación
-        try:
-            proxy_url = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
-            response['X-Cover-Image-Rel'] = filepath_rel
-            response['X-Cover-Image-Url'] = proxy_url
-        except Exception:
-            pass
-        return response
+        cache_expires = _save_cache_entry(user, user_identifier, prompt, filepath_rel)
+        _log_image_usage(
+            user=user,
+            user_identifier=user_identifier,
+            prompt=prompt,
+            provider=provider_used or preferred,
+            image_path=filepath_rel,
+            reused_from_cache=False,
+        )
+        status_info = _image_rate_limit_status(user_identifier)
+        return _build_image_response(
+            filepath_rel,
+            request,
+            remaining=status_info.get("remaining", IMAGE_DAILY_LIMIT),
+            reused=False,
+            cache_expires=cache_expires,
+        )
         
 
     except RuntimeError as e:
@@ -1547,21 +1737,71 @@ def regenerate_cover_image(request, session_id):
             'count': current_count,
             'max': MAX_REGENERATIONS
         }, status=400)
-    
+
+    user, user_identifier = _user_and_identifier(request)
+    rate_status = _image_rate_limit_status(user_identifier)
+
     # Construir prompt basado en el tema y dificultad
     topic = session.topic or 'Quiz'
     difficulty = session.difficulty or 'Media'
     prompt_for_image = f"{topic} - {difficulty} quiz cover"
     preferred = _header_provider(request)
 
-    # Generar nueva imagen con timeout de 15 segundos
-    new_image_path = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=15)
-    
+    cached = _get_cached_image(user_identifier, prompt_for_image)
+    cache_expires = getattr(cached, "expires_at", None)
+    provider_used = preferred
+    reused = False
+
+    if cached:
+        new_image_path = cached.image_path
+        reused = True
+    else:
+        if rate_status['remaining'] <= 0:
+            return JsonResponse({
+                'error': 'rate_limit_exceeded',
+                'message': 'Has alcanzado el límite diario de generación de imágenes (10). Intenta mañana o reutiliza prompts recientes.'
+            }, status=429)
+
+        # Generar nueva imagen con timeout de 15 segundos
+        result = generate_cover_image(
+            prompt_for_image,
+            preferred_provider=preferred,
+            size=1024,
+            timeout_secs=15,
+            return_provider=True,
+        )
+        if isinstance(result, tuple):
+            new_image_path, provider_used = result
+        else:
+            new_image_path, provider_used = result, preferred
+
     if not new_image_path:
         return JsonResponse({
             'error': 'image_generation_failed',
             'message': 'No se pudo generar la nueva imagen. Intenta de nuevo más tarde.'
         }, status=500)
+
+    if not reused:
+        cache_expires = _save_cache_entry(user, user_identifier, prompt_for_image, new_image_path)
+        _log_image_usage(
+            user=user,
+            user_identifier=user_identifier,
+            prompt=prompt_for_image,
+            provider=provider_used or preferred,
+            image_path=new_image_path,
+            reused_from_cache=False,
+        )
+        rate_status = _image_rate_limit_status(user_identifier)
+    else:
+        _log_image_usage(
+            user=user,
+            user_identifier=user_identifier,
+            prompt=prompt_for_image,
+            provider="cache",
+            image_path=new_image_path,
+            reused_from_cache=True,
+            estimated_cost_usd=0.0,
+        )
     
     # Obtener historial actual (máximo 3 imágenes)
     history = getattr(session, 'cover_image_history', []) or []
@@ -1606,7 +1846,11 @@ def regenerate_cover_image(request, session_id):
         'image_path': new_image_path,
         'count': session.cover_regeneration_count,
         'remaining': MAX_REGENERATIONS - session.cover_regeneration_count,
-        'history': history_urls
+        'history': history_urls,
+        'cache_reused': reused,
+        'cache_expires_at': cache_expires.isoformat() if cache_expires else None,
+        'rate_limit_remaining': rate_status.get('remaining'),
+        'provider': provider_used,
     })
 
 
