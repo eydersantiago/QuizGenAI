@@ -232,7 +232,7 @@ def create_session_with_edits(request):
                 if error_msg == "no_providers_available":
                     return JsonResponse({
                         'error': 'no_providers_available',
-                        'message': 'No hay créditos disponibles en ningún proveedor de IA'
+                        'message': 'No hay créditos disponibles en los proveedores configurados (Gemini/OpenAI)'
                     }, status=503)
 
                 return JsonResponse({
@@ -382,7 +382,7 @@ def regenerate_in_preview_mode(request):
             if error_msg == "no_providers_available":
                 return JsonResponse({
                     'error': 'no_providers_available',
-                    'message': 'No hay créditos disponibles'
+                    'message': 'No hay créditos disponibles en los proveedores configurados (Gemini/OpenAI)'
                 }, status=503)
 
             logger.error(f"Error regenerando en preview: {error_msg}")

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 try:
     import os
     import requests
+    from openai import OpenAI
 
     from api.utils.gemini_keys import get_next_gemini_key
 
@@ -63,12 +64,39 @@ try:
                 logger.error(f"Error generando texto con Gemini: {e}")
                 return None
 
+    class OpenAINLU:
+        """Wrapper para OpenAI API como fallback de sugerencias."""
+
+        def __init__(self):
+            api_key = os.getenv("OPENAI_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY not configured")
+            self.client = OpenAI(api_key=api_key)
+            self.model = os.getenv("OPENAI_SUGGESTION_MODEL", "gpt-4o-mini")
+
+        def generate_text(self, prompt: str, max_words: int = 20) -> Optional[str]:
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=max_words * 2,
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                return text if text else None
+            except Exception as e:
+                logger.error(f"Error generando texto con OpenAI: {e}")
+                return None
+
     GEMINI_AVAILABLE = True
+    OPENAI_AVAILABLE = True
 
 except ImportError as e:
     logger.warning(f"NLU classes no disponibles: {e}")
     GEMINI_AVAILABLE = False
+    OPENAI_AVAILABLE = False
     GeminiNLU = None
+    OpenAINLU = None
 
 
 class SuggestionEngine:
@@ -105,6 +133,7 @@ class SuggestionEngine:
 
         # Inicializar instancias de LLM si están disponibles
         self.gemini = None
+        self.openai = None
 
         if use_llm_fallback:
             try:
@@ -113,6 +142,13 @@ class SuggestionEngine:
                     logger.info("Gemini NLU inicializado correctamente")
             except Exception as e:
                 logger.warning(f"No se pudo inicializar Gemini: {e}")
+
+            try:
+                if OPENAI_AVAILABLE and OpenAINLU:
+                    self.openai = OpenAINLU()
+                    logger.info("OpenAI NLU inicializado correctamente")
+            except Exception as e:
+                logger.warning(f"No se pudo inicializar OpenAI: {e}")
 
     def _check_rate_limit(self, user_id: Optional[str]) -> bool:
         """
@@ -352,19 +388,25 @@ La sugerencia debe ser motivadora y específica. Responde SOLO con el texto de l
         suggestion_text = None
         source = None
 
-        # Intentar con Gemini
+        providers = []
         if self.gemini:
-            logger.info("Intentando generar sugerencia con Gemini")
+            providers.append(("gemini", self.gemini))
+        if self.openai:
+            providers.append(("openai", self.openai))
+
+        for name, engine in providers:
+            logger.info(f"Intentando generar sugerencia con {name}")
             try:
-                suggestion_text = self.gemini.generate_text(prompt, max_words=20)
+                suggestion_text = engine.generate_text(prompt, max_words=20)
                 if suggestion_text:
-                    source = "gemini"
-                    logger.info("Sugerencia generada con Gemini exitosamente")
+                    source = name
+                    logger.info(f"Sugerencia generada exitosamente con {name}")
+                    break
             except Exception as e:
-                logger.error(f"Error usando Gemini para sugerencia: {e}")
+                logger.error(f"Error usando {name} para sugerencia: {e}")
 
         if not suggestion_text:
-            logger.warning("Fallback a LLM falló: Gemini no disponible")
+            logger.warning("Fallback a LLM falló: ningún proveedor disponible para sugerencias")
             return None
 
         # Determinar acción basada en el contexto

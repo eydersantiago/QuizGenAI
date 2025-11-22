@@ -2,13 +2,18 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 
-const DEFAULT_PROVIDER = "perplexity";
+const DEFAULT_PROVIDER = "openai";
+const ALLOWED_PROVIDERS = ["openai", "gemini"];
 const STORAGE_KEY = "quizgenai_llm_provider";
 const CTX = createContext({ provider: DEFAULT_PROVIDER, setProvider: () => {}, headerName: "X-LLM-Provider" });
 
 export function ModelProviderProvider({ children }) {
   const [provider, setProvider] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEY) || DEFAULT_PROVIDER; } catch { return DEFAULT_PROVIDER; }
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored && ALLOWED_PROVIDERS.includes(stored)) return stored;
+      return DEFAULT_PROVIDER;
+    } catch { return DEFAULT_PROVIDER; }
   });
 
   useEffect(() => { try { localStorage.setItem(STORAGE_KEY, provider); } catch {} }, [provider]);
@@ -29,6 +34,6 @@ export function withProviderHeaders(init = {}, provider, headerName = "X-LLM-Pro
 }
 
 export const PROVIDER_LABELS = {
-  perplexity: "Perplexity [usar en producción]",
-  gemini_flash_2_5_demo: "Gemini Flash 2.5 [usar en pruebas]",
+  openai: "OpenAI [usar en producción]",
+  gemini: "Gemini Flash 2.5 [usar en pruebas]",
 };
