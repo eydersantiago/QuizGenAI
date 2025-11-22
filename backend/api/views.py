@@ -721,6 +721,7 @@ def sessions(request):
     difficulty = _normalize_difficulty(data.get('difficulty', ''))
     types = data.get('types', [])  # ["mcq","vf"]
     counts = data.get('counts', {})
+    image_counts = data.get('image_counts', {})
 
     if not topic:
         return JsonResponse({'error':'topic required'}, status=400)
@@ -752,13 +753,31 @@ def sessions(request):
     if total > MAX_TOTAL_QUESTIONS:
         return JsonResponse({'error': f'total questions ({total}) exceed max {MAX_TOTAL_QUESTIONS}'}, status=400)
 
-    session = GenerationSession.objects.create(
-        topic=topic,
-        category=cat,
-        difficulty=difficulty,
-        types=types,
-        counts=counts
-    )
+    # Intentar crear la sesión incluyendo image_counts. Si la migración no se aplicó
+    # y la columna no existe en la base de datos, caerá aquí y haremos un fallback
+    # creando la sesión sin ese campo para evitar un 500 en producción.
+    try:
+        session = GenerationSession.objects.create(
+            topic=topic,
+            category=cat,
+            difficulty=difficulty,
+            types=types,
+            counts=counts,
+            image_counts=image_counts
+        )
+    except Exception:
+        # Loguear opcionalmente
+        try:
+            session = GenerationSession.objects.create(
+                topic=topic,
+                category=cat,
+                difficulty=difficulty,
+                types=types,
+                counts=counts
+            )
+        except Exception as e:
+            # Si falla incluso sin image_counts, propagar para que el manejador superior lo vea
+            raise
     # Intentar generar portada asociada a la sesión (timeout corto)
     try:
         prompt_for_image = f"{topic} - {difficulty} quiz cover"
@@ -860,6 +879,16 @@ def preview_questions(request):
         generated = clean
 
         if session:
+            # Si el cliente indicó image_counts al crear la sesión, adjuntar imágenes a algunas preguntas
+            try:
+                img_counts = getattr(session, 'image_counts', None) or (data.get('image_counts') if isinstance(data, dict) else {})
+                if img_counts:
+                    attach_images_to_questions(topic, img_counts, generated, session=session, request=request, size=512, timeout_secs=10)
+            except Exception:
+                # No bloquear el preview por fallos en la generación de imágenes de preguntas
+                pass
+
+            # Persistir preview (incluye posibles campos image_rel/image_url añadidos)
             session.latest_preview = generated
             session.save(update_fields=["latest_preview"])
 
@@ -1213,6 +1242,51 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
         return None
     except Exception:
         return None
+
+
+def attach_images_to_questions(topic, image_counts, questions, session=None, request=None, size=512, timeout_secs=10):
+    """Adjunta imágenes generadas a una lista de preguntas según image_counts.
+    Añade `image_rel` (ruta relativa) y `image_url` (URL absoluta si se pasa `request`) a cada pregunta afectada.
+    """
+    if not image_counts or not isinstance(image_counts, dict):
+        return
+    # Iterar por cada tipo y generar hasta la cantidad requerida
+    for qtype, required in image_counts.items():
+        try:
+            needed = int(required)
+        except Exception:
+            continue
+        if needed <= 0:
+            continue
+        placed = 0
+        for q in questions:
+            if placed >= needed:
+                break
+            if q.get('type') != qtype:
+                continue
+            if q.get('image_rel'):
+                continue
+            # Construir prompt específico para que la imagen sea la base de la pregunta
+            q_text = (q.get('question') or '').strip()
+            prompt = (
+                f"Genera una imagen educativa y clara para acompañar la siguiente pregunta de tema '{topic}': \"{q_text}\". "
+                "La pregunta debe poder formularse sobre la imagen generada. Evita incluir texto dentro de la imagen. "
+                "Estilo: ilustrativo, colores claros, aspecto didáctico, sin logos ni marcas."
+            )
+            try:
+                filepath_rel = generate_cover_image(prompt, size=size, timeout_secs=timeout_secs)
+            except Exception:
+                filepath_rel = None
+            if not filepath_rel:
+                continue
+            q['image_rel'] = filepath_rel
+            if request:
+                try:
+                    q['image_url'] = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
+                except Exception:
+                    q['image_url'] = f"{settings.MEDIA_URL}{filepath_rel}"
+            placed += 1
+    return
 
 @api_view(['POST'])
 def gemini_generate_image(request):

@@ -606,6 +606,22 @@ const QuestionCard = React.memo(function QuestionCard({
     }
   }, [isEditing, question.question]);
 
+  // Resolver URL de imagen si existe (image_url preferido, sino construir desde image_rel)
+  const resolveImageSrc = useCallback(() => {
+    const q = question;
+    if (!q) return null;
+    if (q.image_url) return q.image_url;
+    if (q.image_rel) {
+      try {
+        const apiOrigin = new URL(API_BASE).origin;
+        return q.image_rel.startsWith('http') ? q.image_rel : apiOrigin + `/api/media/proxy/${q.image_rel}`;
+      } catch (e) {
+        return q.image_rel;
+      }
+    }
+    return null;
+  }, [question]);
+
   const handleSaveEdit = useCallback(() => {
     if (!localEditText.trim()) {
       Swal.fire({
@@ -688,6 +704,11 @@ const QuestionCard = React.memo(function QuestionCard({
         ) : (
           <div className="view-mode">
             <p className="question-text">{question.question}</p>
+            {question.image_url || question.image_rel ? (
+              <div className="question-image-preview" style={{ marginTop: 8 }}>
+                <img src={resolveImageSrc()} alt="Ilustración de la pregunta" style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 6 }} />
+              </div>
+            ) : null}
             <button
               className="edit-button"
               onClick={onStartEdit}

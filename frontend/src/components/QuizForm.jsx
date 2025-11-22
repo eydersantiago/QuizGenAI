@@ -175,6 +175,7 @@ export default function QuizForm(props) {
   const [difficulty, setDifficulty] = useState("Fácil");
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
+  const [imageCounts, setImageCounts] = useState({ mcq: 0, vf: 0 });
   const [preview, setPreview] = useState(null);
   const [coverImage, setCoverImage] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
@@ -205,6 +206,7 @@ export default function QuizForm(props) {
         if (parsed.difficulty) setDifficulty(parsed.difficulty);
         if (parsed.types) setTypes(parsed.types);
         if (parsed.counts) setCounts(parsed.counts);
+        if (parsed.imageCounts) setImageCounts(parsed.imageCounts);
         if (parsed.timestamp) {
           setLastSaved(new Date(parsed.timestamp));
         }
@@ -313,6 +315,7 @@ export default function QuizForm(props) {
       difficulty,
       types,
       counts,
+      imageCounts,
       timestamp: new Date().toISOString(),
     };
 
@@ -323,7 +326,7 @@ export default function QuizForm(props) {
     setTimeout(() => {
       setIsAutoSaving(false);
     }, 500);
-  }, [topic, difficulty, types, counts]);
+  }, [topic, difficulty, types, counts, imageCounts]);
 
   // Auto-guardar cuando cambian los datos (con debounce)
   useEffect(() => {
@@ -335,7 +338,15 @@ export default function QuizForm(props) {
 
       return () => clearTimeout(timeoutId);
     }
-  }, [topic, difficulty, types, counts, autoSave]);
+  }, [topic, difficulty, types, counts, imageCounts, autoSave]);
+
+  function handleImageCountChange(t, v) {
+    const n = Math.max(0, Math.min(20, Number(v)));
+    // ensure we don't allow more images than total questions for that type
+    const maxAllowed = Number(counts[t] || 0);
+    const final = Math.min(n, maxAllowed);
+    setImageCounts((prev) => ({ ...prev, [t]: final }));
+  }
 
   // Función para limpiar datos guardados
   const clearSavedData = useCallback(() => {
@@ -372,6 +383,15 @@ export default function QuizForm(props) {
       Swal.fire("Excedido", `Máx ${MAX_TOTAL} preguntas.`, "error");
       return false;
     }
+    // Asegurarse que las preguntas con imágenes no superen la cantidad total por tipo
+    for (const k of Object.keys(imageCounts)) {
+      const imgN = Number(imageCounts[k] || 0);
+      const totalN = Number(counts[k] || 0);
+      if (imgN > totalN) {
+        Swal.fire("Error", `Las preguntas con imágenes no pueden superar la cantidad total para ${k.toUpperCase()}.`, "error");
+        return false;
+      }
+    }
     return true;
   }
 
@@ -381,7 +401,12 @@ export default function QuizForm(props) {
     // Primero crear una sesión temporal para obtener un sessionId
     try {
       setCreating(true);
-      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
+      // Ajustar counts para restar las preguntas con imágenes
+      const adjustedCounts = { ...counts };
+      Object.keys(imageCounts).forEach((k) => {
+        adjustedCounts[k] = Math.max(0, (Number(counts[k] || 0) - Number(imageCounts[k] || 0)));
+      });
+      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts: adjustedCounts, image_counts: imageCounts };
 
       // Crear sesión temporal
       const sessionRes = await fetch(
@@ -463,7 +488,12 @@ export default function QuizForm(props) {
     if (!validate()) return;
     try {
       setCreating(true);
-      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
+      // Ajustar counts para restar las preguntas con imágenes
+      const adjustedCounts2 = { ...counts };
+      Object.keys(imageCounts).forEach((k) => {
+        adjustedCounts2[k] = Math.max(0, (Number(counts[k] || 0) - Number(imageCounts[k] || 0)));
+      });
+      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts: adjustedCounts2, image_counts: imageCounts };
       const res = await fetch(
         `${API_BASE}/sessions/`,
         withProviderHeaders(
@@ -540,11 +570,17 @@ export default function QuizForm(props) {
       }
 
       // Si no había sesión previa, crear una nueva como antes
+      // Ajustar counts para restar las preguntas con imágenes y enviar ambos valores
+      const adjustedCounts3 = { ...counts };
+      Object.keys(imageCounts).forEach((k) => {
+        adjustedCounts3[k] = Math.max(0, (Number(counts[k] || 0) - Number(imageCounts[k] || 0)));
+      });
       const payload = {
         topic,
         difficulty,
         types: Object.keys(types).filter((k) => types[k]),
-        counts,
+        counts: adjustedCounts3,
+        image_counts: imageCounts,
         questions: editedQuestions // Enviar las preguntas editadas
       };
 
@@ -767,6 +803,20 @@ export default function QuizForm(props) {
               onChange={(e) => handleCountChange(t, e.target.value)}
               className="border-2 border-indigo-200 rounded-xl text-center p-3 focus:ring-2 focus:ring-indigo-500"
             />
+            {(t === "mcq" || t === "vf") && (
+              <div className="mt-2 text-sm">
+                <label className="block text-xs font-semibold mb-1">cantidad de preguntas con imagenes</label>
+                <input
+                  type="number"
+                  min="0"
+                  max={counts[t] || 20}
+                  value={imageCounts[t] ?? 0}
+                  onChange={(e) => handleImageCountChange(t, e.target.value)}
+                  className="border-2 border-indigo-200 rounded-xl text-center p-2 focus:ring-2 focus:ring-indigo-500"
+                />
+                <div className="text-xs text-gray-500 mt-1">Máx {counts[t]} imágenes para este tipo</div>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -807,6 +857,7 @@ export default function QuizForm(props) {
                   setDifficulty("Fácil");
                   setTypes({ mcq: true, vf: true, short: false });
                   setCounts({ mcq: 5, vf: 3, short: 0 });
+                  setImageCounts({ mcq: 0, vf: 0 });
                   setPreview(null);
                   clearSavedData();
                   Swal.fire("Limpiado", "El formulario ha sido limpiado", "success");
@@ -860,6 +911,19 @@ export default function QuizForm(props) {
             {preview.map((q, i) => (
               <motion.div key={i} className="preview-card" whileHover={{ scale: 1.02 }}>
                 <div className="font-semibold_2">{q.question}</div>
+                {(q.image_url || q.image_rel) && (() => {
+                  try {
+                    const apiOrigin = new URL(API_BASE).origin;
+                    const src = q.image_url ? q.image_url : (q.image_rel && (q.image_rel.startsWith('http') ? q.image_rel : apiOrigin + '/api/media/proxy/' + q.image_rel));
+                    return (
+                      <div style={{ marginTop: 8 }}>
+                        <img src={src} alt={`Imagen pregunta ${i+1}`} style={{ width: '100%', maxHeight: 240, objectFit: 'cover', borderRadius: 8 }} />
+                      </div>
+                    );
+                  } catch (e) {
+                    return null;
+                  }
+                })()}
                 {q.options && (
                   <ul className="list-disc ml-5 text-gray-700">
                     {q.options.map((o, idx) => (

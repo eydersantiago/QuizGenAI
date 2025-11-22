@@ -2841,6 +2841,21 @@ export default function QuizPlay(props) {
                     </div>
                   )}
 
+                  {/* Imagen asociada a la pregunta (si existe) */}
+                  {(q.image_url || q.image_rel) && (() => {
+                    try {
+                      const apiOrigin = new URL(API_BASE).origin;
+                      const imgSrc = q.image_url ? q.image_url : (q.image_rel && (q.image_rel.startsWith('http') ? q.image_rel : apiOrigin + '/api/media/proxy/' + q.image_rel));
+                      return (
+                        <div style={{ marginTop: 12, marginBottom: 8 }}>
+                          <img src={imgSrc} alt={`Imagen para la pregunta ${idx + 1}`} style={{ width: '100%', maxHeight: 360, objectFit: 'contain', borderRadius: 8 }} />
+                        </div>
+                      );
+                    } catch (e) {
+                      return null;
+                    }
+                  })()}
+
                   {/* MCQ */}
                   {q.type === "mcq" && Array.isArray(q.options) && (
                     <div className="qp-options">
