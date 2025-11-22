@@ -14,8 +14,8 @@ export default function ModelProviderSelect({ compact = false }) {
         className="border rounded-md px-2 py-1 text-sm"
         title="Selecciona el backend de generación"
       >
-        <option value="perplexity">{PROVIDER_LABELS.perplexity}</option>
-        <option value="gemini_flash_2_5_demo">{PROVIDER_LABELS.gemini_flash_2_5_demo}</option>
+        <option value="openai">{PROVIDER_LABELS.openai}</option>
+        <option value="gemini">{PROVIDER_LABELS.gemini}</option>
       </select>
     </div>
   );

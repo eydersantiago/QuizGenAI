@@ -95,7 +95,7 @@ def serve_generated_media(request, filepath: str):
 def _extract_json(raw: str) -> dict:
     raw = (raw or "").strip()
     if not raw:
-        raise ValueError("Respuesta vacía de Gemini")
+        raise ValueError("Respuesta vacía del proveedor LLM")
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.S).strip()
     if not raw.lstrip().startswith("{"):
@@ -106,11 +106,21 @@ def _extract_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-def _configure_gemini():
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    genai.configure(api_key=api_key)
+def _call_with_retry(fn, attempts: int = 3, base_delay: float = 1.0):
+    last_error = None
+    delay = base_delay
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: PERF203 -- necesitamos capturar cualquier fallo de proveedor
+            last_error = e
+            if i == attempts - 1:
+                break
+            time.sleep(delay)
+            delay *= 2
+    if last_error:
+        raise last_error
+    raise RuntimeError("unknown_retry_failure")
 
 
 def _normalize_difficulty(diff: str) -> str:
@@ -267,6 +277,18 @@ def _get_genai_client():
     except Exception as e:
         logger.error(f"[CoverImage] Error al inicializar cliente GenAI: {e}")
         raise RuntimeError(f"genai_client_unavailable: {e}")
+
+
+def _configure_openai():
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("openai_api_key_missing: Configura OPENAI_API_KEY en el entorno")
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError(f"openai_sdk_not_installed: {e}")
+    return OpenAI(api_key=api_key)
+
 
 def _configure_gemini():
     api_key = get_next_gemini_key()
@@ -450,23 +472,151 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
     return data
 
 
+OPENAI_MODEL = "gpt-4o-mini"
+
+
+def generate_questions_with_openai(topic, difficulty, types, counts):
+    client = _configure_openai()
+
+    total = sum(int(counts.get(t, 0)) for t in types)
+    schema = _json_schema_questions()
+
+    prompt = f"""
+Genera exactamente {total} preguntas sobre "{topic}" en nivel {difficulty}.
+Distribución por tipo (counts): {json.dumps(counts, ensure_ascii=False)}.
+
+Política de calidad (OBLIGATORIA):
+- Sin sesgos ni estereotipos (no generalizaciones sobre grupos).
+- Sin lenguaje ofensivo.
+- Evita ambigüedades: no uses “etc.”, “…”, “depende”, “generalmente”.
+- Enunciados claros, objetivos y específicos para informática/sistemas.
+- mcq: 4 opciones distintas, answer ∈ {{A,B,C,D}}.
+- vf: answer ∈ {{Verdadero,Falso}}.
+- short: answer = texto corto.
+- explanation ≤ 40 palabras.
+Devuelve ÚNICAMENTE un JSON que cumpla con el schema dado.
+"""
+
+    resp = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+        temperature=0.9,
+    )
+
+    content = (resp.choices[0].message.content or "").strip()
+    data = _extract_json(content)
+
+    if "questions" not in data or not isinstance(data["questions"], list):
+        raise ValueError("Respuesta sin 'questions' válido")
+
+    expected = total
+    got = len(data["questions"])
+    if got < expected:
+        raise ValueError(f"Se esperaban {expected} preguntas y llegaron {got}")
+    if got > expected:
+        data["questions"] = data["questions"][:expected]
+
+    return data["questions"]
+
+
+def regenerate_question_with_openai(topic, difficulty, qtype, base_question=None, avoid_phrases=None):
+    client = _configure_openai()
+
+    schema = _json_schema_one()
+    if qtype not in ("mcq", "vf", "short"):
+        qtype = "mcq"
+
+    seed_clause = ""
+    if base_question:
+        seed_txt = json.dumps({
+            "type": base_question.get("type"),
+            "question": base_question.get("question"),
+            "options": base_question.get("options"),
+            "answer": base_question.get("answer"),
+        }, ensure_ascii=False)
+        seed_clause = (
+            "Toma como referencia conceptual la pregunta base, pero **prohíbe** reutilizar el mismo enunciado, "
+            "ejemplos, números o nombres concretos. Cambia el foco o los datos para crear una variante clara. "
+            "No repitas frases ni listas tal cual.\n"
+            f"Pregunta base:\n{seed_txt}\n"
+        )
+
+    avoid_txt = ""
+    if avoid_phrases:
+        bullets = "\n".join(f"- {p}" for p in list(avoid_phrases)[:8])
+        avoid_txt = f"Evita formular enunciados similares a los siguientes:\n{bullets}\n"
+
+    rules = """
+Reglas de calidad:
+- Mantén el mismo tema y dificultad.
+- Prohibido reutilizar el mismo enunciado/datos de la base (cambia foco o valores).
+- Sin sesgos/estereotipos, sin lenguaje ofensivo.
+- Evita ambigüedades: no uses “etc.”, “…”, “depende”, “generalmente”.
+- type=mcq: 4 opciones nuevas y distintas; "answer" ∈ {A,B,C,D}.
+- type=vf: enunciado nuevo (no negación trivial); "answer" ∈ {"Verdadero","Falso"}.
+- type=short: solución breve; "explanation" ≤ 40 palabras.
+- Responde SOLO con JSON válido al schema.
+"""
+
+    prompt = f"""
+Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
+{seed_clause}
+{avoid_txt}
+{rules}
+"""
+
+    resp = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+        temperature=0.95,
+    )
+
+    content = (resp.choices[0].message.content or "").strip()
+    data = _extract_json(content)
+
+    if data.get("type") != qtype:
+        data["type"] = qtype
+    if qtype == "mcq":
+        opts = data.get("options", [])
+        if not isinstance(opts, list) or len(opts) != 4:
+            data["options"] = ["A) Opción 1", "B) Opción 2", "C) Opción 3", "D) Opción 4"]
+            data["answer"] = "A"
+        else:
+            ans = str(data.get("answer","A")).strip().upper()[:1]
+            if ans not in ("A","B","C","D"):
+                data["answer"] = "A"
+    if qtype == "vf":
+        ans = str(data.get("answer","")).strip().capitalize()
+        if ans not in ("Verdadero","Falso"):
+            data["answer"] = "Verdadero"
+
+    return data
+
+
 
 def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
     """
     Devuelve (questions, provider_used, fallback_used, errors_map)
-
-    Con múltiples claves de Gemini disponibles, cada llamada rota la clave usada
-    para maximizar créditos. Ya no se utilizan otros proveedores.
     """
     errors = {}
-    try:
-        qs = generate_questions_with_gemini(topic, difficulty, types, counts)
-        return qs, "gemini", False, errors
-    except Exception as e:
-        msg = str(e)
-        errors["gemini"] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
+    order = _provider_order(preferred)
 
-    if errors.get("gemini", {}).get("no_credits"):
+    for idx, provider in enumerate(order):
+        fallback_used = idx > 0
+        try:
+            if provider == "gemini":
+                qs = _call_with_retry(lambda: generate_questions_with_gemini(topic, difficulty, types, counts), attempts=3)
+            else:
+                qs = _call_with_retry(lambda: generate_questions_with_openai(topic, difficulty, types, counts), attempts=3)
+            return qs, provider, fallback_used, errors
+        except Exception as e:
+            msg = str(e)
+            errors[provider] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
+            continue
+
+    if any(err.get("no_credits") for err in errors.values()):
         raise RuntimeError("no_providers_available")
     raise RuntimeError(f"providers_failed: {errors}")
 
@@ -476,14 +626,22 @@ def _regenerate_with_fallback(topic, difficulty, qtype, base_q, avoid_phrases, p
     Devuelve (question, provider_used, fallback_used, errors_map)
     """
     errors = {}
-    try:
-        q = regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases)
-        return q, "gemini", False, errors
-    except Exception as e:
-        msg = str(e)
-        errors["gemini"] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
+    order = _provider_order(preferred)
 
-    if errors.get("gemini", {}).get("no_credits"):
+    for idx, provider in enumerate(order):
+        fallback_used = idx > 0
+        try:
+            if provider == "gemini":
+                q = _call_with_retry(lambda: regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases), attempts=3)
+            else:
+                q = _call_with_retry(lambda: regenerate_question_with_openai(topic, difficulty, qtype, base_q, avoid_phrases), attempts=3)
+            return q, provider, fallback_used, errors
+        except Exception as e:
+            msg = str(e)
+            errors[provider] = {"message": msg, "no_credits": _is_no_credits_msg(msg)}
+            continue
+
+    if any(err.get("no_credits") for err in errors.values()):
         raise RuntimeError("no_providers_available")
     raise RuntimeError(f"providers_failed: {errors}")
 
@@ -546,16 +704,30 @@ def find_category_for_topic(topic):
 # Proveedor y fallback
 # ---------------------------
 
+ALLOWED_PROVIDERS = {"gemini", "openai"}
+
+
 def _header_provider(request) -> str:
-    """Siempre usamos Gemini; el header se ignora por compatibilidad."""
-    return "gemini"
+    preferred = (request.headers.get("X-LLM-Provider") or request.META.get("HTTP_X_LLM_PROVIDER") or "").strip().lower()
+    if preferred not in ALLOWED_PROVIDERS:
+        preferred = "gemini"
+    return preferred
+
+
+def _provider_order(preferred: str) -> List[str]:
+    preferred = (preferred or "").strip().lower()
+    if preferred not in ALLOWED_PROVIDERS:
+        preferred = "gemini"
+    secondary = "openai" if preferred == "gemini" else "gemini"
+    return [preferred, secondary]
+
 
 def _is_no_credits_msg(msg: str) -> bool:
     m = (msg or "").lower()
     # heurística suficiente para 402/429/quotas/creditos
     return any(kw in m for kw in [
         "quota", "over quota", "insufficient", "billing", "payment required",
-        "credit", "out of credits", "429", "402"
+        "credit", "out of credits", "429", "402", "rate limit"
     ])
 
 
@@ -626,10 +798,11 @@ def sessions(request):
 
     
     # Intentar generar portada asociada a la sesión (timeout corto)
+    preferred = _header_provider(request)
     try:
         logger.info(f"[Sessions] Intentando generar imagen de portada para sesión {session.id}")
         prompt_for_image = f"{topic} - {difficulty} quiz cover"
-        img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
+        img_rel = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=10)
         if img_rel:
             session.cover_image = img_rel
             session.save(update_fields=['cover_image'])
@@ -738,7 +911,7 @@ def preview_questions(request):
                 if not getattr(session, 'cover_image', ''):
                     logger.info(f"[CoverImage] Intentando generar imagen para sesión {session.id}, tema: {topic}")
                     prompt_for_image = f"{topic} - {difficulty} quiz cover"
-                    img_rel = generate_cover_image(prompt_for_image, size=1024, timeout_secs=10)
+                    img_rel = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=10)
                     if img_rel:
                         session.cover_image = img_rel
                         session.save(update_fields=['cover_image'])
@@ -801,7 +974,7 @@ def preview_questions(request):
             return JsonResponse(
                 {
                     "error": "no_providers_available",
-                    "message": "No hay créditos disponibles en Gemini.",
+                    "message": "No hay créditos disponibles en los proveedores configurados (Gemini/OpenAI).",
                 },
                 status=503
             )
@@ -1033,133 +1206,147 @@ def gemini_generate(request):
 
 
 
-def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) -> str:
-    """Genera una imagen con Gemini y devuelve la ruta relativa dentro de MEDIA_ROOT (ej: 'generated/image_x.png').
-    Si falla o excede timeout, retorna None.
-    """
+def _store_image_bytes(image_bytes: bytes) -> str:
+    if isinstance(image_bytes, (bytes, bytearray)):
+        image_bytes = bytes(image_bytes)
+    else:
+        raise ValueError("image_bytes debe ser bytes")
+
+    ext = 'png'
+    try:
+        if image_bytes.startswith(b'\x89PNG'):
+            ext = 'png'
+        elif image_bytes.startswith(b'\xff\xd8\xff'):
+            ext = 'jpg'
+        elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
+            ext = 'gif'
+        else:
+            if PILImage is not None:
+                try:
+                    img = PILImage.open(io.BytesIO(image_bytes))
+                    fmt = (getattr(img, 'format', None) or '').lower()
+                    if fmt:
+                        ext = 'jpg' if fmt == 'jpeg' else fmt
+                except Exception:
+                    pass
+    except Exception:
+        ext = 'png'
+
+    output_dir = os.path.join(settings.MEDIA_ROOT, 'generated')
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"image_{int(time.time())}.{ext}"
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, 'wb') as fh:
+        fh.write(image_bytes)
+
+    logger.info(f"[CoverImage] Imagen guardada exitosamente en {filepath}")
+    return f"generated/{filename}"
+
+
+def _generate_cover_image_with_gemini(prompt: str, size: int) -> str:
+    client = _get_genai_client()
+    logger.info(f"[CoverImage] Configurando Google GenAI Client para generar imagen con prompt: {prompt}")
+
+    p = f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. Estilo claro, educativo, colores brillantes, poco texto."
+
+    model_candidates = [
+        'gemini-2.5-flash-image',
+        'imagen-4.0-fast-generate-001',
+        'imagen-4.0-generate-001',
+        'imagen-4.0-ultra-generate-001',
+    ]
+
+    image_data = None
+    last_error = None
+
+    for model_name in model_candidates:
+        try:
+            logger.info(f"[CoverImage] Intentando generar imagen con modelo: {model_name}")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[p],
+            )
+
+            for part in response.parts:
+                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                    image_data = part.inline_data.data
+                    break
+                if hasattr(part, 'inlineData') and part.inlineData is not None:
+                    image_data = part.inlineData.data
+                    break
+                if hasattr(part, 'as_image'):
+                    img = part.as_image()
+                    img_bytes = io.BytesIO()
+                    img.save(img_bytes, format='PNG')
+                    image_data = img_bytes.getvalue()
+                    break
+
+            if image_data:
+                break
+
+        except Exception as e:
+            last_error = e
+            logger.warning(f"[CoverImage] Modelo {model_name} falló: {str(e)}")
+            continue
+
+    if not image_data:
+        error_msg = f"No se pudo generar imagen con ningún modelo. Último error: {last_error}"
+        logger.error(f"[CoverImage] {error_msg}")
+        raise RuntimeError(error_msg)
+
+    if isinstance(image_data, (bytes, bytearray)):
+        image_bytes = bytes(image_data)
+    else:
+        s = str(image_data).strip()
+        if s.startswith('data:') and ',' in s:
+            s = s.split(',', 1)[1]
+        image_bytes = base64.b64decode(s)
+
+    return _store_image_bytes(image_bytes)
+
+
+def _generate_cover_image_with_openai(prompt: str, size: int) -> str:
+    client = _configure_openai()
+    logger.info("[CoverImage] Generando imagen con OpenAI")
+
+    response = client.images.generate(
+        model="dall-e-3",
+        prompt=f"Genera una imagen {size}x{size} educativa y colorida para un quiz sobre: {prompt}.",
+        size=f"{size}x{size}",
+        response_format="b64_json",
+    )
+
+    if not response.data:
+        raise RuntimeError("Respuesta vacía de OpenAI para imagen")
+    image_b64 = response.data[0].b64_json
+    image_bytes = base64.b64decode(image_b64)
+    return _store_image_bytes(image_bytes)
+
+
+def generate_cover_image(prompt: str, preferred_provider: str = "gemini", size: int = 1024, timeout_secs: int = 10) -> str:
+    """Genera una imagen y devuelve la ruta relativa dentro de MEDIA_ROOT (ej: 'generated/image_x.png')."""
     prompt = (prompt or '').strip()
     if not prompt:
         logger.warning("[CoverImage] Prompt vacío, no se puede generar imagen")
         return None
 
     def _do_generate():
-        try:
-            client = _get_genai_client()
-            logger.info(f"[CoverImage] Configurando Google GenAI Client para generar imagen con prompt: {prompt}")
-            
-            # Ajustar prompt para tamaño y estilo educativo
-            p = f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. Estilo claro, educativo, colores brillantes, poco texto."
-            
-            # Lista de modelos a intentar (en orden de preferencia)
-            model_candidates = [
-                'gemini-2.5-flash-image',  # Modelo nativo de Gemini para imágenes
-                'imagen-4.0-fast-generate-001',  # Imagen 4 Fast (más rápido)
-                'imagen-4.0-generate-001',  # Imagen 4 Estándar
-                'imagen-4.0-ultra-generate-001',  # Imagen 4 Ultra (mejor calidad)
-            ]
-            
-            image_data = None
-            model_used = None
-            last_error = None
-            
-            for model_name in model_candidates:
-                try:
-                    logger.info(f"[CoverImage] Intentando generar imagen con modelo: {model_name}")
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=[p],
-                    )
-                    
-                    # Procesar respuesta según el nuevo SDK
-                    for part in response.parts:
-                        # Verificar si tiene inline_data (nuevo SDK)
-                        if hasattr(part, 'inline_data') and part.inline_data is not None:
-                            image_data = part.inline_data.data
-                            model_used = model_name
-                            logger.info(f"[CoverImage] Imagen generada exitosamente con {model_name}")
-                            break
-                        # Verificar si tiene inlineData (formato alternativo)
-                        elif hasattr(part, 'inlineData') and part.inlineData is not None:
-                            image_data = part.inlineData.data
-                            model_used = model_name
-                            logger.info(f"[CoverImage] Imagen generada exitosamente con {model_name} (formato inlineData)")
-                            break
-                        # Verificar si tiene as_image() method (nuevo SDK)
-                        elif hasattr(part, 'as_image'):
-                            try:
-                                img = part.as_image()
-                                # Convertir PIL Image a bytes
-                                import io
-                                img_bytes = io.BytesIO()
-                                img.save(img_bytes, format='PNG')
-                                image_data = img_bytes.getvalue()
-                                model_used = model_name
-                                logger.info(f"[CoverImage] Imagen generada exitosamente con {model_name} (formato PIL)")
-                                break
-                            except Exception as e:
-                                logger.debug(f"[CoverImage] Error al convertir PIL image: {e}")
-                                continue
-                    
-                    if image_data:
-                        break
-                        
-                except Exception as e:
-                    last_error = e
-                    logger.warning(f"[CoverImage] Modelo {model_name} falló: {str(e)}")
-                    continue
-            
-            if not image_data:
-                error_msg = f"No se pudo generar imagen con ningún modelo. Último error: {last_error}"
-                logger.error(f"[CoverImage] {error_msg}")
-                raise RuntimeError(error_msg)
-
-            # Decodificar
-            if isinstance(image_data, (bytes, bytearray)):
-                image_bytes = bytes(image_data)
-            else:
-                s = str(image_data).strip()
-                if s.startswith('data:') and ',' in s:
-                    s = s.split(',', 1)[1]
-                image_bytes = base64.b64decode(s)
-
-            # Detectar extensión
-            ext = 'png'
+        errors = {}
+        order = _provider_order(preferred_provider)
+        for idx, provider in enumerate(order):
             try:
-                if image_bytes.startswith(b'\x89PNG'):
-                    ext = 'png'
-                elif image_bytes.startswith(b'\xff\xd8\xff'):
-                    ext = 'jpg'
-                elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
-                    ext = 'gif'
-                else:
-                    if PILImage is not None:
-                        try:
-                            img = PILImage.open(io.BytesIO(image_bytes))
-                            fmt = (getattr(img, 'format', None) or '').lower()
-                            if fmt:
-                                ext = 'jpg' if fmt == 'jpeg' else fmt
-                        except Exception:
-                            pass
-            except Exception:
-                ext = 'png'
+                if provider == "gemini":
+                    return _call_with_retry(lambda: _generate_cover_image_with_gemini(prompt, size), attempts=3)
+                return _call_with_retry(lambda: _generate_cover_image_with_openai(prompt, size), attempts=3)
+            except Exception as e:
+                errors[provider] = str(e)
+                logger.error(f"[CoverImage] Error con {provider}: {e}")
+                continue
 
-            output_dir = os.path.join(settings.MEDIA_ROOT, 'generated')
-            os.makedirs(output_dir, exist_ok=True)
-            filename = f"image_{int(time.time())}.{ext}"
-            filepath = os.path.join(output_dir, filename)
-            with open(filepath, 'wb') as fh:
-                fh.write(image_bytes)
+        if any(_is_no_credits_msg(msg) for msg in errors.values()):
+            raise RuntimeError("no_providers_available")
+        raise RuntimeError(f"providers_failed: {errors}")
 
-            logger.info(f"[CoverImage] Imagen guardada exitosamente en {filepath}")
-            # Retornar ruta relativa usando slashes '/' para que sea válida como URL
-            return f"generated/{filename}"
-        except Exception as e:
-            logger.error(f"[CoverImage] Error en _do_generate: {str(e)}", exc_info=True)
-            capture_exception(e)
-            raise
-
-
-    # Ejecutar con timeout usando ThreadPoolExecutor
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(_do_generate)
@@ -1172,7 +1359,6 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
         capture_exception(e)
         return None
     except RuntimeError as e:
-        # Errores específicos del SDK (no instalado, etc.) - no críticos
         error_msg = str(e)
         if "google_genai_sdk_not_installed" in error_msg or "genai_client_unavailable" in error_msg:
             logger.warning(f"[CoverImage] SDK no disponible, saltando generación de imagen: {error_msg}")
@@ -1192,12 +1378,13 @@ def gemini_generate_image(request):
     prompt = (request.data.get('prompt') or '').strip()
     # Optional session_id to persist generated image to a GenerationSession
     session_id = (request.data.get('session_id') or request.GET.get('session_id'))
+    preferred = _header_provider(request)
     if not prompt:
         return JsonResponse({'error': 'prompt required'}, status=400)
 
     try:
         # Usar helper que encapsula la generación con timeout
-        filepath_rel = generate_cover_image(prompt, size=1024, timeout_secs=10)
+        filepath_rel = generate_cover_image(prompt, preferred_provider=preferred, size=1024, timeout_secs=10)
         if not filepath_rel:
             # fallback: devolver placeholder (si existe en MEDIA_ROOT/static o similar)
             placeholder = os.path.join(settings.MEDIA_ROOT, 'generated', 'placeholder.png')
@@ -1284,9 +1471,10 @@ def regenerate_cover_image(request, session_id):
     topic = session.topic or 'Quiz'
     difficulty = session.difficulty or 'Media'
     prompt_for_image = f"{topic} - {difficulty} quiz cover"
-    
+    preferred = _header_provider(request)
+
     # Generar nueva imagen con timeout de 15 segundos
-    new_image_path = generate_cover_image(prompt_for_image, size=1024, timeout_secs=15)
+    new_image_path = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=15)
     
     if not new_image_path:
         return JsonResponse({
