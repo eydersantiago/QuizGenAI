@@ -14,33 +14,23 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-# Intentar importar clases NLU para fallback a LLM
+# Intentar importar clase NLU para fallback a LLM
 try:
     import os
     import requests
 
+    from api.utils.gemini_keys import get_next_gemini_key
+
     class GeminiNLU:
-        """
-        Wrapper para Gemini API para generar texto de sugerencias.
-        """
+        """Wrapper para Gemini API para generar texto de sugerencias."""
+
         def __init__(self):
-            self.api_key = os.getenv("GEMINI_API_KEY")
-            if not self.api_key:
-                raise RuntimeError("GEMINI_API_KEY no está configurada")
+            self.api_key = get_next_gemini_key()
             self.model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-exp")
             self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
 
         def generate_text(self, prompt: str, max_words: int = 20) -> Optional[str]:
-            """
-            Genera texto usando Gemini API.
-
-            Args:
-                prompt: Prompt para generar el texto
-                max_words: Máximo de palabras esperadas
-
-            Returns:
-                Texto generado o None si falla
-            """
+            """Genera texto usando Gemini API."""
             try:
                 headers = {"Content-Type": "application/json"}
                 payload = {
@@ -49,7 +39,7 @@ try:
                     }],
                     "generationConfig": {
                         "temperature": 0.7,
-                        "maxOutputTokens": max_words * 2,  # Aprox. 2 tokens por palabra
+                        "maxOutputTokens": max_words * 2,
                         "topP": 0.9,
                     }
                 }
@@ -73,77 +63,12 @@ try:
                 logger.error(f"Error generando texto con Gemini: {e}")
                 return None
 
-    class PerplexityNLU:
-        """
-        Wrapper para Perplexity API para generar texto de sugerencias.
-        """
-        def __init__(self):
-            self.api_key = os.getenv("PPLX_API_KEY")
-            if not self.api_key:
-                raise RuntimeError("PPLX_API_KEY no está configurada")
-            self.model = os.getenv("PPLX_MODEL", "llama-3.1-sonar-small-128k-chat")
-            self.api_url = "https://api.perplexity.ai/chat/completions"
-
-        def generate_text(self, prompt: str, max_words: int = 20) -> Optional[str]:
-            """
-            Genera texto usando Perplexity API.
-
-            Args:
-                prompt: Prompt para generar el texto
-                max_words: Máximo de palabras esperadas
-
-            Returns:
-                Texto generado o None si falla
-            """
-            try:
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "Eres un asistente educativo amigable. Responde de forma concisa y directa."
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": max_words * 2
-                }
-
-                response = requests.post(
-                    self.api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=10
-                )
-
-                if response.status_code != 200:
-                    logger.warning(f"Perplexity API error: {response.status_code}")
-                    return None
-
-                data = response.json()
-                text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                return text if text else None
-
-            except Exception as e:
-                logger.error(f"Error generando texto con Perplexity: {e}")
-                return None
-
     GEMINI_AVAILABLE = True
-    PERPLEXITY_AVAILABLE = True
 
 except ImportError as e:
     logger.warning(f"NLU classes no disponibles: {e}")
     GEMINI_AVAILABLE = False
-    PERPLEXITY_AVAILABLE = False
     GeminiNLU = None
-    PerplexityNLU = None
 
 
 class SuggestionEngine:
@@ -158,7 +83,6 @@ class SuggestionEngine:
         error_threshold (int): Número de errores consecutivos para sugerencias (default: 2)
         use_llm_fallback (bool): Si usar LLM cuando no hay reglas aplicables (default: True)
         gemini (GeminiNLU): Instancia de Gemini para fallback
-        perplexity (PerplexityNLU): Instancia de Perplexity para fallback
     """
 
     def __init__(
@@ -181,7 +105,6 @@ class SuggestionEngine:
 
         # Inicializar instancias de LLM si están disponibles
         self.gemini = None
-        self.perplexity = None
 
         if use_llm_fallback:
             try:
@@ -190,13 +113,6 @@ class SuggestionEngine:
                     logger.info("Gemini NLU inicializado correctamente")
             except Exception as e:
                 logger.warning(f"No se pudo inicializar Gemini: {e}")
-
-            try:
-                if PERPLEXITY_AVAILABLE and PerplexityNLU:
-                    self.perplexity = PerplexityNLU()
-                    logger.info("Perplexity NLU inicializado correctamente")
-            except Exception as e:
-                logger.warning(f"No se pudo inicializar Perplexity: {e}")
 
     def _check_rate_limit(self, user_id: Optional[str]) -> bool:
         """
@@ -401,7 +317,7 @@ class SuggestionEngine:
 
     def _generate_llm_suggestion(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Genera sugerencia usando LLM (Gemini o Perplexity) como fallback.
+        Genera sugerencia usando LLM (solo Gemini) como fallback.
 
         Args:
             context: Contexto del usuario
@@ -436,7 +352,7 @@ La sugerencia debe ser motivadora y específica. Responde SOLO con el texto de l
         suggestion_text = None
         source = None
 
-        # Intentar con Gemini primero
+        # Intentar con Gemini
         if self.gemini:
             logger.info("Intentando generar sugerencia con Gemini")
             try:
@@ -447,19 +363,8 @@ La sugerencia debe ser motivadora y específica. Responde SOLO con el texto de l
             except Exception as e:
                 logger.error(f"Error usando Gemini para sugerencia: {e}")
 
-        # Fallback a Perplexity si Gemini falla
-        if not suggestion_text and self.perplexity:
-            logger.info("Intentando generar sugerencia con Perplexity")
-            try:
-                suggestion_text = self.perplexity.generate_text(prompt, max_words=20)
-                if suggestion_text:
-                    source = "perplexity"
-                    logger.info("Sugerencia generada con Perplexity exitosamente")
-            except Exception as e:
-                logger.error(f"Error usando Perplexity para sugerencia: {e}")
-
         if not suggestion_text:
-            logger.warning("Fallback a LLM falló: ambos servicios no disponibles")
+            logger.warning("Fallback a LLM falló: Gemini no disponible")
             return None
 
         # Determinar acción basada en el contexto
@@ -512,7 +417,7 @@ La sugerencia debe ser motivadora y específica. Responde SOLO con el texto de l
                 - action_params (dict): Parámetros de la acción
                 - priority (str): 'high', 'medium', 'low'
                 - reasoning (str): Explicación de por qué se generó
-                - source (str): 'rule_based', 'gemini', 'perplexity'
+                - source (str): 'rule_based', 'gemini'
 
             Retorna None si no hay sugerencia o si está rate limited.
 

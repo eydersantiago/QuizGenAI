@@ -486,7 +486,7 @@ def generate_review_quiz(request, quiz_id):
                 if str(e) == "no_providers_available":
                     return JsonResponse({
                         'error': 'no_providers_available',
-                        'message': 'No hay créditos disponibles en los proveedores LLM (Perplexity/Gemini).'
+                        'message': 'No hay créditos disponibles en Gemini.'
                     }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
                 else:
                     # Si falla la generación de una variante, continuar con las demás
