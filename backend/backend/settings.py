@@ -4,6 +4,10 @@ import os
 import sys
 from dotenv import load_dotenv
 import dj_database_url
+import logging 
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 # --- Mitigar conflictos por agentes de Azure (OpenTelemetry) ---
 # Evita que /agents/python/typing_extensions.py sombree el del venv
@@ -89,6 +93,43 @@ TEMPLATES = [
         },
     },
 ]
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+}
+
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+
+if SENTRY_DSN:
+    sentry_logging = LoggingIntegration(
+        level=logging.INFO,      # Nivel que se captura en breadcrumbs
+        event_level=logging.ERROR,  # Nivel que se envía como evento a Sentry
+    )
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            sentry_logging,
+        ],
+        # 0.0 = sin traces, subes a 0.1 / 0.2 si quieres perf más adelante
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+        send_default_pii=False,  # True si quieres asociar usuarios autenticados
+        environment=os.getenv("SENTRY_ENV", "local"),
+        release=os.getenv("SENTRY_RELEASE", "quizgenai@dev"),
+    )
+
+
 
 WSGI_APPLICATION = "backend.wsgi.application"
 ASGI_APPLICATION = "backend.asgi.application"

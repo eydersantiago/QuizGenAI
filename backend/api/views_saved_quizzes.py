@@ -6,6 +6,8 @@ from rest_framework import status
 from django.utils import timezone
 from django.db.models import Q, Count, Avg
 from django.db import transaction
+from sentry_sdk import capture_exception
+
 
 from .models import SavedQuiz, GenerationSession
 from .serializers import (
@@ -16,7 +18,6 @@ from .serializers import (
 )
 from .views import (
     regenerate_question_with_gemini,
-    regenerate_question_with_pplx,
     _regenerate_with_fallback,
     _header_provider,
     _norm_for_cmp
@@ -124,8 +125,10 @@ def saved_quizzes(request):
                         except Exception:
                             pass
                         cover_image_rel = img_rel
-                except Exception:
+                except Exception as e:
                     cover_image_rel = ''
+                    capture_exception(e)
+
 
         saved_quiz = SavedQuiz.objects.create(
             title=data['title'],
@@ -248,6 +251,7 @@ def load_saved_quiz(request, quiz_id):
             }, status=201)
             
     except Exception as e:
+        capture_exception(e)
         return JsonResponse({
             'error': 'Error al cargar el cuestionario',
             'details': str(e)
@@ -373,10 +377,12 @@ def quiz_statistics(request):
         }, status=200)
         
     except Exception as e:
+        capture_exception(e)
         return JsonResponse({
             'error': 'Error al obtener estadísticas',
             'details': str(e)
         }, status=500)
+
 
 
 @api_view(['POST'])
@@ -535,6 +541,7 @@ def generate_review_quiz(request, quiz_id):
         }, status=status.HTTP_201_CREATED)
 
     except Exception as e:
+        capture_exception(e)
         return JsonResponse({
             'error': 'Error al generar quiz de repaso',
             'message': str(e)

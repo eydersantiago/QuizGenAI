@@ -7,10 +7,14 @@ from django.conf.urls.static import static
 def root_health(_request):
     return JsonResponse({"status": "ok"})
 
+def trigger_error(request):
+    division_by_zero = 1 / 0
+
 urlpatterns = [
     path("", root_health, name="root_health"),
     path("admin/", admin.site.urls),
     path("api/", include("api.urls")),  # <--- muy importante
+    path('sentry-debug/', trigger_error),
 ]
 
 # Servir media en DEBUG (archivos subidos / generados)

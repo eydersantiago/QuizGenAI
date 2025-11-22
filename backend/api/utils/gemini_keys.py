@@ -1,9 +1,28 @@
+# api/utils/gemini_keys.py
+
 import os
 import itertools
 from typing import List
+import logging
+
+logger = logging.getLogger(__name__)
 
 _key_cycle = None
 _keys_cache: List[str] | None = None
+
+
+def _mask_key(key: str) -> str:
+    """
+    Enmascara la key para logging seguro.
+    Ejemplo: AIzaSyAm21wZUQlVfD6Cza8Nz1VZaMn4B2kAruk -> AIzaSyAm...rukk
+    """
+    if not key:
+        return "<empty>"
+    k = key.strip()
+    if len(k) <= 10:
+        return k[:3] + "..."  # muy corta, solo primeros 3
+    return f"{k[:8]}...{k[-4:]}"
+
 
 def _load_keys() -> List[str]:
     global _keys_cache
@@ -18,7 +37,20 @@ def _load_keys() -> List[str]:
         keys = [single] if single else []
 
     _keys_cache = keys
+
+    # 🔹 LOG: cuántas keys encontró y cuáles (enmascaradas)
+    if not keys:
+        logger.warning("[GeminiKeys] No se encontró ninguna GEMINI_API_KEY(S) en el entorno.")
+    else:
+        masked = [ _mask_key(k) for k in keys ]
+        logger.info(
+            "[GeminiKeys] Cargadas %d Gemini API key(s) desde el entorno: %s",
+            len(keys),
+            ", ".join(masked),
+        )
+
     return keys
+
 
 def get_next_gemini_key() -> str:
     """Return the next Gemini API key available.
@@ -30,14 +62,37 @@ def get_next_gemini_key() -> str:
     global _key_cycle
     keys = _load_keys()
     if not keys:
+        # 🔹 LOG: error crítico
+        logger.error("[GeminiKeys] get_next_gemini_key llamado sin keys configuradas.")
         raise RuntimeError("GEMINI_API_KEY(S) not set")
 
     if len(keys) == 1:
+        # 🔹 LOG: está usando la única key disponible
+        logger.debug(
+            "[GeminiKeys] Usando única Gemini API key configurada: %s",
+            _mask_key(keys[0]),
+        )
         return keys[0]
 
     if _key_cycle is None:
         _key_cycle = itertools.cycle(keys)
-    return next(_key_cycle)
+
+    key = next(_key_cycle)
+    try:
+        idx = keys.index(key)
+    except ValueError:
+        idx = -1
+
+    # 🔹 LOG: qué key usa en esta llamada (índice + key enmascarada)
+    logger.info(
+        "[GeminiKeys] Rotación de Gemini key -> usando key #%s/%s: %s",
+        idx + 1 if idx >= 0 else "?",
+        len(keys),
+        _mask_key(key),
+    )
+
+    return key
+
 
 def has_any_gemini_key() -> bool:
     return bool(_load_keys())

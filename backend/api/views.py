@@ -15,6 +15,8 @@ from typing import List
 import concurrent.futures
 import mimetypes
 from django.http import Http404
+from sentry_sdk import capture_exception
+
 
 from api.utils.gemini_keys import get_next_gemini_key, has_any_gemini_key
 
@@ -40,14 +42,16 @@ except Exception:
     PILImage = None
 # =========================================================
 
+
 @api_view(['GET'])
 def health_check(request):
-    """Endpoint simple para verificar que el backend está funcionando"""
     return JsonResponse({
         'status': 'ok',
         'message': 'Backend funcionando correctamente',
-        'timestamp': timezone.now().isoformat()
+        'timestamp': timezone.now().isoformat(),
+        'sentry_enabled': bool(os.getenv("SENTRY_DSN")),
     })
+
 
 
 @api_view(['GET'])
@@ -606,7 +610,6 @@ def sessions(request):
     if total > MAX_TOTAL_QUESTIONS:
         logger.warning(f"[Sessions] Error: total de preguntas ({total}) excede máximo ({MAX_TOTAL_QUESTIONS})")
         return JsonResponse({'error': f'total questions ({total}) exceed max {MAX_TOTAL_QUESTIONS}'}, status=400)
-
     try:
         session = GenerationSession.objects.create(
             topic=topic,
@@ -618,7 +621,9 @@ def sessions(request):
         logger.info(f"[Sessions] Sesión creada exitosamente: {session.id}")
     except Exception as e:
         logger.error(f"[Sessions] Error al crear sesión: {str(e)}", exc_info=True)
+        capture_exception(e)
         return JsonResponse({'error': f'Error al crear sesión: {str(e)}'}, status=500)
+
     
     # Intentar generar portada asociada a la sesión (timeout corto)
     try:
@@ -630,8 +635,9 @@ def sessions(request):
             session.save(update_fields=['cover_image'])
             logger.info(f"[Sessions] Imagen de portada generada y guardada: {img_rel}")
     except Exception as e:
-        # No bloquear la creación de la sesión por fallo en generación de imagen
         logger.warning(f"[Sessions] Error al generar imagen de portada (no crítico): {str(e)}")
+        capture_exception(e)
+
     
     return JsonResponse({'session_id': str(session.id), 'topic': topic, 'difficulty': difficulty}, status=201)
 
@@ -740,8 +746,9 @@ def preview_questions(request):
                     else:
                         logger.warning(f"[CoverImage] generate_cover_image retornó None para sesión {session.id}")
             except Exception as e:
-                # No bloquear el preview si falla la generación de la imagen, pero loguear el error
                 logger.error(f"[CoverImage] Error al generar imagen para sesión {session.id}: {str(e)}", exc_info=True)
+                capture_exception(e)
+
 
         resp = {
             'preview': generated,
@@ -789,6 +796,8 @@ def preview_questions(request):
 
     except RuntimeError as e:
         if str(e) == "no_providers_available":
+            # esto también suele ser importante de monitorear
+            capture_exception(e)
             return JsonResponse(
                 {
                     "error": "no_providers_available",
@@ -797,10 +806,12 @@ def preview_questions(request):
                 status=503
             )
         # otros errores
+        capture_exception(e)
         return JsonResponse(
             {"error": "providers_failed", "message": str(e)},
             status=500
         )
+
 
 
 
@@ -897,6 +908,7 @@ def regenerate_question(request):
 
     except RuntimeError as e:
         if str(e) == "no_providers_available":
+            capture_exception(e)
             return JsonResponse(
                 {"error": "no_providers_available", "message": "Sin créditos en ambos proveedores."},
                 status=503
@@ -1010,13 +1022,15 @@ def gemini_generate(request):
         response = model.generate_content(prompt)
         return JsonResponse({'result': response.text})
     except RuntimeError as e:
-        # genai_unavailable o falta de API key -> 503 para que Front distinga “servicio externo caído”
+        capture_exception(e)
         return JsonResponse(
             {'error': 'genai_unavailable', 'message': str(e)},
             status=503
         )
     except Exception as e:
+        capture_exception(e)
         return JsonResponse({'error': str(e)}, status=500)
+
 
 
 def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) -> str:
@@ -1141,7 +1155,9 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
             return f"generated/{filename}"
         except Exception as e:
             logger.error(f"[CoverImage] Error en _do_generate: {str(e)}", exc_info=True)
+            capture_exception(e)
             raise
+
 
     # Ejecutar con timeout usando ThreadPoolExecutor
     try:
@@ -1151,8 +1167,9 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
             if result:
                 logger.info(f"[CoverImage] Imagen generada exitosamente: {result}")
             return result
-    except concurrent.futures.TimeoutError:
+    except concurrent.futures.TimeoutError as e:
         logger.error(f"[CoverImage] Timeout al generar imagen después de {timeout_secs} segundos")
+        capture_exception(e)
         return None
     except RuntimeError as e:
         # Errores específicos del SDK (no instalado, etc.) - no críticos
@@ -1162,10 +1179,13 @@ def generate_cover_image(prompt: str, size: int = 1024, timeout_secs: int = 10) 
             logger.warning("[CoverImage] Para habilitar generación de imágenes, instala: pip install google-genai")
         else:
             logger.error(f"[CoverImage] Error de runtime: {error_msg}")
+            capture_exception(e)
         return None
     except Exception as e:
         logger.error(f"[CoverImage] Error inesperado al generar imagen: {str(e)}", exc_info=True)
+        capture_exception(e)
         return None
+
 
 @api_view(['POST'])
 def gemini_generate_image(request):
@@ -1226,10 +1246,12 @@ def gemini_generate_image(request):
         
 
     except RuntimeError as e:
-        # genai_unavailable or missing API key => 503 so frontend can treat as external service down
+        capture_exception(e)
         return JsonResponse({'error': 'genai_unavailable', 'message': str(e)}, status=503)
     except Exception as e:
+        capture_exception(e)
         return JsonResponse({'error': 'generate_failed', 'message': str(e)}, status=500)
+
 
 
 @api_view(['POST'])
@@ -1384,7 +1406,9 @@ def update_session_preview(request, session_id):
         else:
             session.save(update_fields=['latest_preview'])
     except Exception as e:
+        capture_exception(e)
         return JsonResponse({'error': 'save_failed', 'message': str(e)}, status=500)
+
 
     resp = {
         'ok': True,
