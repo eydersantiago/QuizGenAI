@@ -79,6 +79,7 @@ class ImagePromptCache(models.Model):
     prompt = models.TextField()
     prompt_hash = models.CharField(max_length=64, db_index=True)
     image_path = models.CharField(max_length=500)
+    descripcion = models.TextField(blank=True, default="", help_text="Descripción/prompt usado para generar la imagen")
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
@@ -122,6 +123,36 @@ class ImageGenerationLog(models.Model):
     def __str__(self):
         source = "cache" if self.reused_from_cache else "generated"
         return f"{self.user_identifier} - {source} at {self.created_at}"
+
+
+class ImageAsset(models.Model):
+    """
+    Registro persistente de imágenes generadas y asociadas a sesiones/quizzes.
+    Permite buscar por sesión, tipo (portada/quiz) y nombre legible.
+    """
+    IMAGE_TYPE_CHOICES = (
+        ("portada", "Portada"),
+        ("quiz", "Quiz"),
+        ("other", "Other"),
+    )
+
+    id = models.BigAutoField(primary_key=True)
+    session = models.ForeignKey(GenerationSession, null=True, blank=True, on_delete=models.CASCADE, related_name="images")
+    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="image_assets")
+    image_type = models.CharField(max_length=20, choices=IMAGE_TYPE_CHOICES, default="other")
+    name = models.CharField(max_length=255, blank=True, default="")
+    image_path = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "image_asset"
+        indexes = [
+            models.Index(fields=["session", "image_type"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"ImageAsset {self.id} ({self.image_type}) - {self.name or self.image_path}"
 
 
 class SavedQuiz(models.Model):

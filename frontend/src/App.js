@@ -4,6 +4,7 @@ import React, { useEffect } from "react";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import { getSlot } from './utils/voiceParsing';
 import QuizForm from "./components/QuizForm";
+import ImageGallery from "./pages/ImageGallery";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
 import SavedQuizzes from "./components/SavedQuizzes";
@@ -113,6 +114,7 @@ function App() {
               >
                 🎤 Panel de voz
               </Link>
+              <Link to="/images" className="btn" style={{ marginLeft: 8 }}>Galería</Link>
               <ModelProviderSelect compact />
             </div>
           )}
@@ -139,6 +141,7 @@ function App() {
 
               <Routes>
                 <Route path="/" element={<QuizForm sessionId={sessionId} />} />
+                <Route path="/images" element={<ImageGallery/>} />
                 <Route path="/mic-test" element={<MicTest />} />
                 <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
                 <Route
@@ -153,22 +156,27 @@ function App() {
               </Routes>
             </section>
           ) : (
-            <Routes>
-              <Route path="/quiz/:sessionId" element={<QuizPlay />} />
-              <Route path="/saved-quizzes" element={<SavedQuizzes />} />
-              <Route path="/admin/metrics" element={<AdminMetrics />} />
-              <Route path="/mic-test" element={<MicTest />} />
-              <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
-              <Route
-                path="/voice"
-                element={
-                  <section className="card" style={{ padding: 16 }}>
-                    <h2 style={{ marginTop: 0 }}>Comandos de Voz</h2>
-                    <VoiceCommandPanel sessionId={sessionId} />
-                  </section>
-                }
-              />
-            </Routes>
+            <>
+              <Routes>
+                <Route path="/quiz/:sessionId" element={<QuizPlay />} />
+                <Route path="/saved-quizzes" element={<SavedQuizzes />} />
+                <Route path="/admin/metrics" element={<AdminMetrics />} />
+                <Route path="/mic-test" element={<MicTest />} />
+                <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
+                <Route
+                  path="/voice"
+                  element={
+                    <section className="card" style={{ padding: 16 }}>
+                      <h2 style={{ marginTop: 0 }}>Comandos de Voz</h2>
+                      <VoiceCommandPanel sessionId={sessionId} />
+                    </section>
+                  }
+                />
+              </Routes>
+              <div style={{ marginTop: 8 }}>
+                <Link to="/images" className="btn" style={{ marginLeft: 8 }}>Galería</Link>
+              </div>
+            </>
           )}
 
           <footer className="footer">

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 #import google.generativeai as genai
 from .models import GenerationSession, RegenerationLog, ImagePromptCache, ImageGenerationLog
+from .models import ImageAsset
 
 load_dotenv()
 
@@ -1220,6 +1221,12 @@ def sessions(request):
         if img_rel:
             session.cover_image = img_rel
             session.save(update_fields=['cover_image'])
+            try:
+                # Guardar asset de portada con la descripción usada
+                user, _ = _user_and_identifier(request)
+                _save_image_asset(user=user, session=session, image_path=img_rel, image_type="portada", name=f"cover_{session.id}", descripcion=prompt_for_image)
+            except Exception:
+                pass
             # logger.info(f"[Sessions] Imagen de portada generada y guardada: {img_rel}")
 
             # 🔹 Registrar consumo de crédito en ImageGenerationLog
@@ -1507,6 +1514,12 @@ def preview_questions(request):
                                 if not qtxt.lower().strip().startswith('según'):
                                     q['question'] = f"Según esta imagen, {qtxt}"
                                 need[qtype] = max(0, need[qtype] - 1)
+                                try:
+                                    # Registrar imagen como asset tipo 'quiz' incluyendo descripcion si existe
+                                    descr = q.get('descripcion_imagen') or prompt_for_img
+                                    _save_image_asset(user=user, session=session, image_path=img_rel, image_type="quiz", name=f"q_{session.id}_{idx}", descripcion=descr)
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
                         # continuar hasta cubrir need
@@ -1852,6 +1865,45 @@ def _store_image_bytes(image_bytes: bytes) -> str:
     return f"generated/{filename}"
 
 
+def _save_image_asset(*, user, session: Optional[GenerationSession], image_path: str, image_type: str = "other", name: Optional[str] = None, descripcion: Optional[str] = None):
+    """
+    Guarda un registro en la tabla ImageAsset para la imagen generada.
+    - `user`: usuario (puede ser None)
+    - `session`: instancia de GenerationSession o None
+    - `image_path`: ruta relativa devuelta por _store_image_bytes (ej: 'generated/xxx.png')
+    - `image_type`: 'portada'|'quiz'|'other'
+    - `name`: nombre descriptivo opcional
+    """
+    try:
+        from .models import ImageAsset
+        # Evitar duplicados si ya existe asset para la misma session+image_path
+        if session is not None:
+            existing = ImageAsset.objects.filter(session=session, image_path=image_path).first()
+            if existing:
+                # actualizar descripcion si viene nueva y no existe
+                if descripcion and not existing.descripcion:
+                    existing.descripcion = descripcion
+                    try:
+                        existing.save(update_fields=['descripcion'])
+                    except Exception:
+                        pass
+                return existing
+
+        # Si no existe, crear uno nuevo
+        ia = ImageAsset.objects.create(
+            session=session,
+            user=user,
+            image_type=(image_type or "other")[:20],
+            name=(name or "")[:255],
+            image_path=image_path,
+            descripcion=(descripcion or "")[:2000],
+        )
+        return ia
+    except Exception as e:
+        logger.warning(f"[ImageAsset] No se pudo guardar registro de imagen: {e}")
+        return None
+
+
 def _generate_cover_image_with_openai(prompt: str, size: int) -> str:
     client = _configure_openai()
     # logger.info("[CoverImage] Generando imagen con OpenAI")
@@ -1942,6 +1994,10 @@ def gemini_generate_image(request):
                 if not getattr(ss, 'cover_image', ''):
                     ss.cover_image = cached.image_path
                     ss.save(update_fields=['cover_image'])
+                try:
+                    _save_image_asset(user=user, session=ss, image_path=cached.image_path, image_type="portada", name=f"cover_{ss.id}")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -2001,6 +2057,17 @@ def gemini_generate_image(request):
             image_path=filepath_rel,
             reused_from_cache=False,
         )
+        try:
+            # Intentar asociar a sesión si se proporcionó
+            ss = None
+            if session_id:
+                try:
+                    ss = GenerationSession.objects.get(id=session_id)
+                except Exception:
+                    ss = None
+            _save_image_asset(user=user, session=ss, image_path=filepath_rel, image_type="portada", name=(f"cover_{ss.id}" if ss else f"generated_cover_{int(time.time())}"))
+        except Exception:
+            pass
 
         # 🔁 volver a calcular con el proveedor que realmente consumió créditos
         status_info = _image_rate_limit_status(user_identifier, provider_used or preferred)
@@ -2020,6 +2087,69 @@ def gemini_generate_image(request):
     except Exception as e:
         capture_exception(e)
         return JsonResponse({'error': 'generate_failed', 'message': str(e)}, status=500)
+
+
+@api_view(['GET'])
+def image_assets(request):
+    """
+    Lista los ImageAsset con filtros opcionales:
+    - session_id: UUID
+    - image_type: portada|quiz|other
+    - from: fecha ISO (inclusive)
+    - to: fecha ISO (inclusive)
+    Devuelve lista paginada simple con 'limit' y 'offset'.
+    """
+    try:
+        qs = ImageAsset.objects.all().order_by('-created_at')
+        session_id = request.GET.get('session_id')
+        image_type = request.GET.get('image_type')
+        from_ts = request.GET.get('from')
+        to_ts = request.GET.get('to')
+        if session_id:
+            qs = qs.filter(session__id=session_id)
+        if image_type:
+            qs = qs.filter(image_type__iexact=image_type)
+        from django.utils.dateparse import parse_datetime
+        if from_ts:
+            dt = parse_datetime(from_ts)
+            if dt:
+                qs = qs.filter(created_at__gte=dt)
+        if to_ts:
+            dt2 = parse_datetime(to_ts)
+            if dt2:
+                qs = qs.filter(created_at__lte=dt2)
+
+        try:
+            limit = int(request.GET.get('limit', 50))
+        except Exception:
+            limit = 50
+        try:
+            offset = int(request.GET.get('offset', 0))
+        except Exception:
+            offset = 0
+
+        total = qs.count()
+        items = qs[offset: offset + limit]
+        results = []
+        for it in items:
+            try:
+                url = request.build_absolute_uri(f"/api/media/proxy/{it.image_path}")
+            except Exception:
+                url = f"{getattr(settings, 'MEDIA_URL','')}{it.image_path}"
+            results.append({
+                'id': it.id,
+                'session_id': str(it.session.id) if it.session else None,
+                'image_type': it.image_type,
+                'name': it.name,
+                'image_path': it.image_path,
+                'image_url': url,
+                'created_at': it.created_at.isoformat(),
+            })
+
+        return JsonResponse({'total': total, 'count': len(results), 'items': results})
+    except Exception as e:
+        capture_exception(e)
+        return JsonResponse({'error': 'list_failed', 'message': str(e)}, status=500)
 
 
 
@@ -2103,6 +2233,10 @@ def regenerate_cover_image(request, session_id):
             reused_from_cache=False,
         )
         rate_status = _image_rate_limit_status(user_identifier)
+        try:
+            _save_image_asset(user=user, session=session, image_path=new_image_path, image_type="portada", name=f"cover_{session.id}_regen_{current_count+1}")
+        except Exception:
+            pass
     else:
         _log_image_usage(
             user=user,
@@ -2113,6 +2247,10 @@ def regenerate_cover_image(request, session_id):
             reused_from_cache=True,
             estimated_cost_usd=0.0,
         )
+        try:
+            _save_image_asset(user=user, session=session, image_path=new_image_path, image_type="portada", name=f"cover_{session.id}_cached")
+        except Exception:
+            pass
     
     # Obtener historial actual (máximo 3 imágenes)
     history = getattr(session, 'cover_image_history', []) or []

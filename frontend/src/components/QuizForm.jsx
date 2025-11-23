@@ -1167,10 +1167,16 @@ async function handleCreate() {
       {/* Enlace a cuestionarios guardados */}
       <div className="mt-8 text-center">
         <p className="text-sm text-gray-600 mb-3">¿Quieres continuar un quiz anterior?</p>
-        <button onClick={() => navigate("/saved-quizzes")} className="btn btn-green-outline">
-          <BookOpen size={20} />
-          Ver Mis Cuestionarios Guardados
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
+          <button onClick={() => navigate("/saved-quizzes")} className="btn btn-green-outline">
+            <BookOpen size={20} />
+            Ver Mis Cuestionarios Guardados
+          </button>
+          <button onClick={() => navigate("/images")} className="btn btn-green-outline">
+            <Eye size={20} />
+            Galería
+          </button>
+        </div>
       </div>
 
       {/* Preview */}
