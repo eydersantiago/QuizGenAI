@@ -52,16 +52,33 @@ def _prompt_hash(prompt: str) -> str:
     return hashlib.sha256(_normalize_prompt(prompt).encode("utf-8")).hexdigest()
 
 
-def _image_rate_limit_status(user_identifier: str) -> Dict[str, int]:
+def _image_rate_limit_status(user_identifier: str, provider: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Devuelve el uso diario por proveedor:
+    - provider='gemini' -> solo imágenes generadas con Gemini
+    - provider='openai' -> solo imágenes generadas con OpenAI
+    - provider=None     -> todas (por si quieres ver el total)
+    """
     now = timezone.now()
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    generated_today = ImageGenerationLog.objects.filter(
+
+    qs = ImageGenerationLog.objects.filter(
         user_identifier=user_identifier,
         created_at__gte=start_of_day,
-        reused_from_cache=False,
-    ).count()
-    remaining = max(0, IMAGE_DAILY_LIMIT - generated_today)
-    return {"used": generated_today, "remaining": remaining}
+        reused_from_cache=False,  # solo las que realmente consumen crédito
+    )
+    if provider:
+        qs = qs.filter(provider__iexact=provider)
+
+    used = qs.count()
+    remaining = max(0, IMAGE_DAILY_LIMIT - used)
+
+    return {
+        "provider": (provider or "all").lower(),
+        "used": used,
+        "remaining": remaining,
+    }
+
 
 
 def _get_cached_image(user_identifier: str, prompt: str) -> Optional[ImagePromptCache]:
@@ -126,7 +143,15 @@ def _log_image_usage(
         logger.warning("[CoverImage] No se pudo registrar uso de imagen: %s", e)
 
 
-def _build_image_response(filepath_rel: str, request, *, remaining: int, reused: bool = False, cache_expires=None):
+def _build_image_response(
+    filepath_rel: str,
+    request,
+    *,
+    remaining: int,
+    reused: bool = False,
+    cache_expires=None,
+    provider: Optional[str] = None,
+):
     fullpath = os.path.join(settings.MEDIA_ROOT, filepath_rel)
     ext = os.path.splitext(fullpath)[1].lstrip('.')
     ct = 'application/octet-stream'
@@ -141,6 +166,7 @@ def _build_image_response(filepath_rel: str, request, *, remaining: int, reused:
     response = FileResponse(fh, content_type=ct)
     response['Content-Length'] = str(os.path.getsize(fullpath))
     response['Content-Disposition'] = f'inline; filename="{os.path.basename(fullpath)}"'
+
     try:
         proxy_url = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
         response['X-Cover-Image-Rel'] = filepath_rel
@@ -150,6 +176,7 @@ def _build_image_response(filepath_rel: str, request, *, remaining: int, reused:
 
     response['X-RateLimit-Limit'] = str(IMAGE_DAILY_LIMIT)
     response['X-RateLimit-Remaining'] = str(max(0, remaining))
+    response['X-RateLimit-Provider'] = (provider or 'all').lower()
     response['X-Image-Reused'] = 'true' if reused else 'false'
     if cache_expires:
         response['X-Cache-Expires'] = cache_expires.isoformat()
@@ -1588,9 +1615,8 @@ def generate_cover_image(
 @api_view(['POST'])
 def gemini_generate_image(request):
     prompt = (request.data.get('prompt') or '').strip()
-    # Optional session_id to persist generated image to a GenerationSession
     session_id = (request.data.get('session_id') or request.GET.get('session_id'))
-    preferred = _header_provider(request)
+    preferred = _header_provider(request)  # 'gemini' o 'openai'
     if not prompt:
         return JsonResponse({'error': 'prompt required'}, status=400)
 
@@ -1607,9 +1633,10 @@ def gemini_generate_image(request):
             reused_from_cache=True,
             estimated_cost_usd=0.0,
         )
-        status_info = _image_rate_limit_status(user_identifier)
 
-        # Si se proporcionó session_id, persistir la ruta relativa en la sesión (no sobrescribir)
+        # ⚠️ importante: solo para info, no cuenta para el límite (reused_from_cache=True)
+        status_info = _image_rate_limit_status(user_identifier, preferred)
+
         if session_id:
             try:
                 ss = GenerationSession.objects.get(id=session_id)
@@ -1625,29 +1652,34 @@ def gemini_generate_image(request):
             remaining=status_info.get("remaining", IMAGE_DAILY_LIMIT),
             reused=True,
             cache_expires=cached.expires_at,
+            provider=preferred,  # 👈 proveedor que está usando el frontend
         )
         return response
 
-    status_info = _image_rate_limit_status(user_identifier)
+    # ⬇️ aquí, en vez de sin proveedor
+    status_info = _image_rate_limit_status(user_identifier, preferred)
     if status_info['remaining'] <= 0:
         logger.warning(
-            f"[CoverImage] Límite diario alcanzado para {user_identifier}: {status_info['used']} / {IMAGE_DAILY_LIMIT}"
+            f"[CoverImage] Límite diario alcanzado para {user_identifier} con proveedor {preferred}: "
+            f"{status_info['used']} / {IMAGE_DAILY_LIMIT}"
         )
         resp = JsonResponse({
             'error': 'rate_limit_exceeded',
-            'message': 'Has alcanzado el límite diario de generación de imágenes (10). Intenta mañana o reutiliza prompts recientes.'
+            'message': f'Has alcanzado el límite diario de generación de imágenes ({IMAGE_DAILY_LIMIT}) para {preferred}. '
+                       'Intenta mañana o reutiliza prompts recientes.'
         }, status=429)
         resp['X-RateLimit-Limit'] = str(IMAGE_DAILY_LIMIT)
         resp['X-RateLimit-Remaining'] = '0'
+        resp['X-RateLimit-Provider'] = preferred
         return resp
 
     if status_info['remaining'] <= 2:
         logger.warning(
-            f"[CoverImage] Advertencia: {user_identifier} cerca del límite de imágenes. Restantes: {status_info['remaining']}"
+            f"[CoverImage] Advertencia: {user_identifier} cerca del límite de imágenes para {preferred}. "
+            f"Restantes: {status_info['remaining']}"
         )
 
     try:
-        # Usar helper que encapsula la generación con timeout
         result = generate_cover_image(
             prompt,
             preferred_provider=preferred,
@@ -1660,30 +1692,7 @@ def gemini_generate_image(request):
         else:
             filepath_rel, provider_used = result, preferred
 
-        if not filepath_rel:
-            # fallback: devolver placeholder (si existe en MEDIA_ROOT/static o similar)
-            placeholder = os.path.join(settings.MEDIA_ROOT, 'generated', 'placeholder.png')
-            if os.path.exists(placeholder):
-                fh = open(placeholder, 'rb')
-                response = FileResponse(fh, content_type='image/png')
-                response['Content-Length'] = str(os.path.getsize(placeholder))
-                response['Content-Disposition'] = f'inline; filename="placeholder.png"'
-                response['X-RateLimit-Limit'] = str(IMAGE_DAILY_LIMIT)
-                response['X-RateLimit-Remaining'] = str(status_info.get("remaining", 0))
-                return response
-            return JsonResponse({'error': 'image_generation_failed'}, status=500)
-
-        # Si se proporcionó session_id, persistir la ruta relativa en la sesión (no sobrescribir)
-        if session_id:
-            try:
-                ss = GenerationSession.objects.get(id=session_id)
-                if not getattr(ss, 'cover_image', ''):
-                    ss.cover_image = filepath_rel
-                    ss.save(update_fields=['cover_image'])
-            except Exception:
-                # No bloquear la entrega de la imagen por fallo al persistir
-                pass
-
+        ...
         cache_expires = _save_cache_entry(user, user_identifier, prompt, filepath_rel)
         _log_image_usage(
             user=user,
@@ -1693,15 +1702,18 @@ def gemini_generate_image(request):
             image_path=filepath_rel,
             reused_from_cache=False,
         )
-        status_info = _image_rate_limit_status(user_identifier)
+
+        # 🔁 volver a calcular con el proveedor que realmente consumió créditos
+        status_info = _image_rate_limit_status(user_identifier, provider_used or preferred)
+
         return _build_image_response(
             filepath_rel,
             request,
             remaining=status_info.get("remaining", IMAGE_DAILY_LIMIT),
             reused=False,
             cache_expires=cache_expires,
+            provider=provider_used or preferred,
         )
-        
 
     except RuntimeError as e:
         capture_exception(e)

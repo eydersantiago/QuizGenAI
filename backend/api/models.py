@@ -60,13 +60,13 @@ class RegenerationLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = "regeneration_log"
-        indexes = [
-            models.Index(fields=["session", "index"]),
-        ]
-
-    def __str__(self):
-        return f"regen[{self.session_id}] idx={self.index} at {self.created_at}"
+            db_table = "regeneration_log"
+            indexes = [
+                models.Index(
+                    fields=["session", "index"],
+                    name="regen_session_index_idx",
+                ),
+            ]
 
 
 class ImagePromptCache(models.Model):
@@ -81,11 +81,14 @@ class ImagePromptCache(models.Model):
     expires_at = models.DateTimeField()
 
     class Meta:
-        db_table = "image_prompt_cache"
-        indexes = [
-            models.Index(fields=["user_identifier", "prompt_hash", "expires_at"]),
-        ]
-        unique_together = ("user_identifier", "prompt_hash")
+            db_table = "image_prompt_cache"
+            indexes = [
+                models.Index(
+                    fields=["user_identifier", "prompt_hash", "expires_at"],
+                    name="img_cache_user_prompt_exp_idx",
+                ),
+            ]
+            unique_together = ("user_identifier", "prompt_hash")
 
     def __str__(self):
         return f"cache[{self.user_identifier}] {self.prompt[:30]}..."

@@ -138,7 +138,7 @@ function App() {
               </div>
 
               <Routes>
-                <Route path="/" element={<QuizForm />} />
+                <Route path="/" element={<QuizForm sessionId={sessionId} />} />
                 <Route path="/mic-test" element={<MicTest />} />
                 <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
                 <Route

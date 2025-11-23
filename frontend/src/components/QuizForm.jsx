@@ -177,8 +177,11 @@ export default function QuizForm(props) {
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
   const [preview, setPreview] = useState(null);
   const [coverImage, setCoverImage] = useState(null);
-  const [coverRegenerationCount, setCoverRegenerationCount] = useState(0);
-  const [coverRegenerationRemaining, setCoverRegenerationRemaining] = useState(3);
+  const [coverRegenerationCount, setCoverRegenerationCount] = useState(null);
+  const [coverRegenerationRemaining, setCoverRegenerationRemaining] = useState(null);
+  const [imageCredits, setImageCredits] = useState(null);
+
+
   const [coverImageHistory, setCoverImageHistory] = useState([]);
   const [lastSaved, setLastSaved] = useState(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
@@ -378,6 +381,54 @@ export default function QuizForm(props) {
     return true;
   }
 
+    // 🔹 Helper: extraer créditos de imagen desde cualquier respuesta del backend
+  function updateImageCreditsFromResponse(response, json) {
+    // 1) Caso ideal: backend manda image_rate_limit en el JSON
+    if (json && json.image_rate_limit) {
+      const {
+        provider: respProvider,
+        limit,
+        remaining,
+        used,
+      } = json.image_rate_limit;
+
+      const safeLimit = typeof limit === "number" ? limit : 0;
+      const safeRemaining = typeof remaining === "number" ? remaining : 0;
+      const safeUsed =
+        typeof used === "number"
+          ? used
+          : Math.max(0, safeLimit - safeRemaining);
+
+      setImageCredits({
+        provider: respProvider || provider || "auto",
+        limit: safeLimit,
+        remaining: safeRemaining,
+        used: safeUsed,
+      });
+
+      return;
+    }
+
+    // 2) Fallback: leer desde headers si vienen allí
+    const limitHeader = response.headers.get("X-RateLimit-Limit");
+    const remainingHeader = response.headers.get("X-RateLimit-Remaining");
+    const providerHeader = response.headers.get("X-RateLimit-Provider");
+
+    if (limitHeader && remainingHeader) {
+      const limit = Number(limitHeader);
+      const remaining = Number(remainingHeader);
+      const used = Math.max(0, limit - remaining);
+
+      setImageCredits({
+        provider: providerHeader || provider || "auto",
+        limit,
+        remaining,
+        used,
+      });
+    }
+  }
+
+
   async function handlePreview() {
     if (!validate()) return;
 
@@ -426,6 +477,10 @@ export default function QuizForm(props) {
 
       const json = await previewRes.json();
 
+      // 🔹 Actualizar créditos de imagen desde esta respuesta
+      updateImageCreditsFromResponse(previewRes, json);
+
+
       const usedHeader = previewRes.headers.get("x-llm-effective-provider");
       const fbHeader = previewRes.headers.get("x-llm-fallback");
 
@@ -436,12 +491,58 @@ export default function QuizForm(props) {
 
       if (previewRes.ok) {
         setPreview(json.preview);
-        // Guardar URL de portada (si el backend la devolvió)
+
         let coverImageUrl = null;
+
+        // 📌 Créditos de imágenes IA (JSON directo)
+        if (json.image_rate_limit) {
+          const {
+            provider: respProvider,
+            limit,
+            remaining,
+            used,
+          } = json.image_rate_limit;
+
+          const safeLimit = typeof limit === "number" ? limit : 0;
+          const safeRemaining = typeof remaining === "number" ? remaining : 0;
+          const safeUsed =
+            typeof used === "number"
+              ? used
+              : Math.max(0, safeLimit - safeRemaining);
+
+          setImageCredits({
+            provider: respProvider || provider || "auto",
+            limit: safeLimit,
+            remaining: safeRemaining,
+            used: safeUsed,
+          });
+        } else {
+          // 📌 Fallback: leer desde headers si sólo vienen ahí
+          const limitHeader = previewRes.headers.get("X-RateLimit-Limit");
+          const remainingHeader = previewRes.headers.get("X-RateLimit-Remaining");
+          const providerHeader = previewRes.headers.get("X-RateLimit-Provider");
+
+          if (limitHeader && remainingHeader) {
+            const limit = Number(limitHeader);
+            const remaining = Number(remainingHeader);
+            const used = Math.max(0, limit - remaining);
+
+            setImageCredits({
+              provider: providerHeader || provider || "auto",
+              limit,
+              remaining,
+              used,
+            });
+          }
+        }
+
+
         if (json.cover_image) {
           try {
             const apiOrigin = new URL(API_BASE).origin;
-            coverImageUrl = json.cover_image.startsWith('http') ? json.cover_image : apiOrigin + json.cover_image;
+            coverImageUrl = json.cover_image.startsWith('http')
+              ? json.cover_image
+              : apiOrigin + json.cover_image;
             setCoverImage(coverImageUrl);
           } catch (e) {
             coverImageUrl = json.cover_image;
@@ -450,12 +551,24 @@ export default function QuizForm(props) {
         } else {
           setCoverImage(null);
         }
-        // Guardar datos de regeneración
-        setCoverRegenerationCount(json?.cover_regeneration_count || 0);
-        setCoverRegenerationRemaining(json?.cover_regeneration_remaining !== undefined ? json.cover_regeneration_remaining : 3);
+
+        // 🔹 Si el backend manda contadores, úsalo
+        // 🔹 Si no, asumimos "0 usadas / 3 restantes" como por quiz
+        setCoverRegenerationCount(
+          typeof json?.cover_regeneration_count === "number"
+            ? json.cover_regeneration_count
+            : 0
+        );
+        setCoverRegenerationRemaining(
+          typeof json?.cover_regeneration_remaining === "number"
+            ? json.cover_regeneration_remaining
+            : 3
+        );
+
         setCoverImageHistory(json?.cover_image_history || []);
-        // Activar el modo editor
         setShowEditor(true);
+
+
       } else {
         Swal.fire("Error", json.error || "No se pudo obtener preview", "error");
       }
@@ -499,6 +612,9 @@ export default function QuizForm(props) {
       try {
         json = await res.json();
       } catch (_) {}
+
+      // 🔹 Actualizar créditos de imagen también al crear sesión directamente
+      updateImageCreditsFromResponse(res, json);
 
       if (!res.ok) {
         Swal.fire("Error", json?.error || "No se pudo crear la sesión", "error");
@@ -646,6 +762,8 @@ export default function QuizForm(props) {
         json = await res.json();
       } catch (_) {}
 
+      updateImageCreditsFromResponse(res, json);
+
       if (!res.ok) {
         Swal.fire("Error", json?.error || "No se pudieron obtener las métricas", "error");
         return;
@@ -702,6 +820,29 @@ export default function QuizForm(props) {
       transition={{ duration: 0.4 }}
     >
       <h2 className="text-3xl font-extrabold text-indigo-700 text-center mb-6">🎯 Genera tu Quiz Inteligente</h2>
+
+      {!!coverImageHistory?.length && (
+        <p className="mt-1 text-xs text-indigo-700">
+          Imágenes generadas en esta sesión:{" "}
+          <strong>{coverImageHistory.length}</strong>.
+        </p>
+      )}
+
+      {imageCredits && (
+        <p className="mt-1 text-xs text-indigo-700">
+          Hoy has usado{" "}
+          <strong>{imageCredits.used}</strong>{" "}
+          imagen{imageCredits.used === 1 ? "" : "es"} de portada con IA y te quedan{" "}
+          <strong>{imageCredits.remaining}</strong>{" "}
+          de un total de{" "}
+          <strong>{imageCredits.limit}</strong>{" "}
+          para el proveedor{" "}
+          <strong>{imageCredits.provider}</strong>.
+        </p>
+      )}
+
+
+
 
       {/* Indicador de guardado automático */}
       <div className="autosave-indicator mb-4">
@@ -796,6 +937,49 @@ export default function QuizForm(props) {
           </div>
         ))}
       </div>
+
+            {/* Info de créditos / regeneraciones de portada IA */}
+    <div className="mt-4 mb-6">
+      {coverRegenerationCount !== null && coverRegenerationRemaining !== null ? (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold">Créditos de portada con IA</span>
+            <span className="text-xs uppercase tracking-wide">
+              Proveedor: {provider || "auto"}
+            </span>
+          </div>
+
+          <p className="mt-1">
+            Has usado{" "}
+            <strong>{coverRegenerationCount}</strong>{" "}
+            regeneración{coverRegenerationCount === 1 ? "" : "es"} de imagen
+            para este quiz.
+          </p>
+
+          <p>
+            Te quedan{" "}
+            <strong>{coverRegenerationRemaining}</strong>{" "}
+            intento{coverRegenerationRemaining === 1 ? "" : "s"} de regenerar
+            la portada antes de confirmar el cuestionario.
+          </p>
+
+          {!!coverImageHistory?.length && (
+            <p className="mt-1 text-xs text-indigo-700">
+              Imágenes generadas en esta sesión:{" "}
+              <strong>{coverImageHistory.length}</strong>.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/60 p-3 text-xs text-indigo-900">
+          Las portadas de los quizzes se generan con IA. Para cada quiz
+          tienes un número limitado de regeneraciones de imagen
+          (<strong>3</strong> por defecto).  
+          Esta barra se actualizará cuando generes la primera previsualización.
+        </div>
+      )}
+    </div>
+
 
       {/* Botones */}
       <div className="flex flex-col sm:flex-row gap-4">

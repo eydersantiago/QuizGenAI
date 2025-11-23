@@ -474,11 +474,17 @@ export default function QuizPreviewEditor({
       <div className="editor-header">
         {coverImage && (
           <div className="editor-cover" style={{ marginRight: 16 }}>
-            <img src={coverImage} alt="Portada del quiz" style={{ width: 160, height: 160, objectFit: 'cover', borderRadius: 8 }} />
+            <img
+              src={coverImage}
+              alt="Portada del quiz"
+              style={{ width: 160, height: 160, objectFit: "cover", borderRadius: 8 }}
+            />
           </div>
         )}
+
         <div className="editor-header-content">
           <h2 className="editor-title">Editar Preguntas del Cuestionario</h2>
+
           {sessionId && coverImage && (
             <div className="editor-cover-controls">
               <CoverImageRegenerator
@@ -492,6 +498,7 @@ export default function QuizPreviewEditor({
             </div>
           )}
         </div>
+
         <div className="editor-config">
           <div className="config-item">
             <strong>Tema:</strong> {config.topic}
@@ -502,11 +509,28 @@ export default function QuizPreviewEditor({
           <div className="config-item">
             <strong>Total de preguntas:</strong> {editedQuestions.length}
           </div>
+          <div className="config-item">
+            <strong>Portada IA:</strong>{" "}
+            {regenerationCount} usada{regenerationCount === 1 ? "" : "s"} ·{" "}
+            {remainingAttempts} restante{remainingAttempts === 1 ? "" : "s"}
+          </div>
         </div>
+
         {hasUnsavedChanges && (
           <div className="unsaved-indicator">
             <AlertCircle size={16} />
             <span>Tienes cambios sin guardar</span>
+          </div>
+        )}
+
+        {remainingAttempts <= 1 && (
+          <div className="image-quota-warning">
+            <AlertCircle size={14} />
+            <span>
+              Te queda{" "}
+              <strong>{remainingAttempts}</strong>{" "}
+              regeneración de portada para este quiz.
+            </span>
           </div>
         )}
       </div>

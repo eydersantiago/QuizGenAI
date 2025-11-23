@@ -14,7 +14,7 @@ _keys_cache: List[str] | None = None
 def _mask_key(key: str) -> str:
     """
     Enmascara la key para logging seguro.
-    Ejemplo: AIzaSyAm21wZUQlVfD6Cza8Nz1VZaMn4B2kAruk -> AIzaSyAm...rukk
+    Ejemplo: AIzaSyA..... -> AIzaSyAm...rukk
     """
     if not key:
         return "<empty>"
