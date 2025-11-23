@@ -1108,22 +1108,80 @@ def sessions(request):
 
     
     # Intentar generar portada asociada a la sesión (timeout corto)
+        # Intentar generar portada asociada a la sesión (timeout corto)
     preferred = _header_provider(request)
+    provider_used = preferred
+    prompt_for_image = f"{topic} - {difficulty} quiz cover"
+
     try:
         logger.info(f"[Sessions] Intentando generar imagen de portada para sesión {session.id}")
-        prompt_for_image = f"{topic} - {difficulty} quiz cover"
-        img_rel = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=10)
+        
+        # ⬇️ importante: pedir también el proveedor realmente usado
+        result = generate_cover_image(
+            prompt_for_image,
+            preferred_provider=preferred,
+            size=1024,
+            timeout_secs=10,
+            return_provider=True,
+        )
+
+        if isinstance(result, tuple):
+            img_rel, provider_used = result
+        else:
+            img_rel, provider_used = result, preferred
+
         if img_rel:
             session.cover_image = img_rel
             session.save(update_fields=['cover_image'])
             logger.info(f"[Sessions] Imagen de portada generada y guardada: {img_rel}")
+
+            # 🔹 Registrar consumo de crédito en ImageGenerationLog
+            user, user_identifier = _user_and_identifier(request)
+            _log_image_usage(
+                user=user,
+                user_identifier=user_identifier,
+                prompt=prompt_for_image,
+                provider=provider_used or preferred,
+                image_path=img_rel,
+                reused_from_cache=False,
+            )
+
+            # 🔹 Recalcular estado de créditos usando el proveedor REAL
+            img_status = _image_rate_limit_status(user_identifier, provider_used or preferred)
+            image_rate_limit = {
+                "provider": img_status.get("provider"),
+                "used": img_status.get("used"),
+                "remaining": img_status.get("remaining"),
+                "limit": IMAGE_DAILY_LIMIT,
+            }
+        else:
+            image_rate_limit = None
+
     except Exception as e:
         logger.warning(f"[Sessions] Error al generar imagen de portada (no crítico): {str(e)}")
         capture_exception(e)
+        image_rate_limit = None
 
-    
-    return JsonResponse({'session_id': str(session.id), 'topic': topic, 'difficulty': difficulty}, status=201)
+    # Construir cover_image como URL absoluta vía proxy (igual que en /preview/)
+    if getattr(session, "cover_image", ""):
+        try:
+            cover_url = request.build_absolute_uri(f"/api/media/proxy/{session.cover_image}")
+        except Exception:
+            cover_url = f"{settings.MEDIA_URL}{session.cover_image}"
+    else:
+        cover_url = None
 
+    resp = {
+        "session_id": str(session.id),
+        "topic": topic,
+        "difficulty": difficulty,
+        "cover_image": cover_url,
+    }
+
+    if image_rate_limit is not None:
+        resp["image_rate_limit"] = image_rate_limit
+
+    return JsonResponse(resp, status=201)
 
 @api_view(['POST'])
 def preview_questions(request):
