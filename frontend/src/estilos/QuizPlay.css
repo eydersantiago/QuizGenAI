@@ -1250,6 +1250,27 @@
   text-align: center;
 }
 
+/* Imagen por pregunta */
+.qp-question-image-container {
+  text-align: center;
+  margin: 10px 0 14px;
+}
+.qp-question-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+  border: 1px solid rgba(0,0,0,0.05);
+  display: inline-block;
+}
+
+@media (min-width: 900px) {
+  /* En pantallas grandes, limitar el ancho de la imagen dentro de la tarjeta */
+  .qp-question-image {
+    max-width: 720px;
+  }
+}
+
 .quiz-cover-placeholder-container {
   display: flex;
   flex-direction: column;

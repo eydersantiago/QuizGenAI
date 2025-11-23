@@ -2785,6 +2785,18 @@ export default function QuizPlay(props) {
                     </button>
                   </div>
 
+                  {/* Imagen asociada a la pregunta (si existe) */}
+                  {q.image && (
+                    <div className="qp-question-image-container">
+                      <img
+                        src={q.image}
+                        alt={`Imagen para pregunta ${idx + 1}`}
+                        className="qp-question-image"
+                        loading="lazy"
+                      />
+                    </div>
+                  )}
+
                   {/* 🔊🎙️ Controles de voz por pregunta (colapsables) */}
                   <div className="qp-voice-row">
                     <button

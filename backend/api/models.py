@@ -27,6 +27,8 @@ class GenerationSession(models.Model):
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
     types = models.JSONField(default=list)   # ["mcq","vf","short"]
     counts = models.JSONField(default=dict)  # {"mcq":5,"vf":2,"short":3}
+    # Cantidad de preguntas que deben incluir una imagen por tipo (ej: {"mcq":2, "vf":1})
+    image_counts = models.JSONField(default=dict, blank=True, help_text="Cantidad de preguntas que incluirán imagen por tipo")
     created_at = models.DateTimeField(auto_now_add=True)
 
     # Último preview generado para esta sesión (persistimos para HU-05)

@@ -31,7 +31,7 @@ from .models import GenerationSession, RegenerationLog, ImagePromptCache, ImageG
 
 load_dotenv()
 
-IMAGE_DAILY_LIMIT = 10
+IMAGE_DAILY_LIMIT = 10000000000
 
 
 def _user_and_identifier(request):
@@ -329,6 +329,11 @@ def _mcq_has_issues(options) -> bool:
         return True
     if len(set(cleaned)) < 4:
         return True
+    # Detectar placeholders genéricos como "opción 1", "opcion 2", "opción 3" etc.
+    placeholder_re = re.compile(r"^opci[oó]n\s*\d+$", re.IGNORECASE)
+    placeholder_count = sum(1 for c in cleaned if placeholder_re.search(c))
+    if placeholder_count >= 2:
+        return True
     return False
 
 def review_question(q: dict) -> list:
@@ -497,7 +502,7 @@ def _generate_cover_image_with_gemini(prompt: str, size: int) -> str:
     gemini-2.5-flash-image, extrayendo correctamente los bytes de imagen.
     """
     client = _get_genai_client()
-    logger.info(f"[CoverImage] Configurando Google GenAI Client para generar imagen con prompt: {prompt}")
+    # logger.info(f"[CoverImage] Configurando Google GenAI Client para generar imagen con prompt: {prompt}")
 
     p = (
         f"Genera una imagen ilustrativa de portada {size}x{size} para un cuestionario sobre: {prompt}. "
@@ -513,7 +518,7 @@ def _generate_cover_image_with_gemini(prompt: str, size: int) -> str:
 
     for model_name in model_candidates:
         try:
-            logger.info(f"[CoverImage] Intentando generar imagen con modelo: {model_name}")
+            # logger.info(f"[CoverImage] Intentando generar imagen con modelo: {model_name}")
             response = client.models.generate_content(
                 model=model_name,
                 contents=[p],
@@ -1000,6 +1005,85 @@ def find_category_for_topic(topic):
     return None
 
 
+def _build_image_prompt(topic: str, question: Union[str, dict]) -> str:
+    """
+    Construye un prompt menos artístico y más técnico/serio para imágenes de preguntas.
+    Acepta la pregunta como texto o como dict (puede incluir 'type' y 'options') y
+    trata de generar instrucciones que conecten claramente la imagen con el enunciado.
+    """
+    if isinstance(question, dict):
+        qtxt = (question.get('question') or '').strip()
+        qtype = (question.get('type') or '').lower()
+        options = question.get('options') or []
+    else:
+        qtxt = (question or '').strip()
+        qtype = ''
+        options = []
+
+    ql = qtxt.lower()
+
+    process_keywords = [
+        "proceso", "paso", "pasos", "flujo", "diagrama", "secuencia", "algoritmo",
+        "flow", "flowchart", "paso a paso", "pipeline", "etapas"
+    ]
+    chart_keywords = [
+        "gráfico", "gráfica", "barras", "lineas", "líneas", "pastel", "histograma",
+        "datos", "porcentaje", "frecuencia", "tabla", "serie", "eje",
+        "estadística", "estadisticas", "estadísticas", "distribución"
+    ]
+
+    # Preferir prompts técnicos y sobrios
+    base_instructions = (
+        "Estilo: técnico y serio, colores sobrios (azules/grises), fondo blanco, "
+        "líneas y tipografía legible. Sin ilustraciones artísticas, sin personajes ni metáforas. "
+        "Diagramas claros, sin texto narrativo adicional (solo etiquetas/leyenda numéricas necesarias). "
+        "Formato: PNG, alta legibilidad para lectura en pantalla."
+    )
+
+    # Si la pregunta tiene opciones (MCQ), pedir una visualización que incluya las opciones como etiquetas
+    if options and isinstance(options, list) and len(options) >= 2:
+        # Limitar etiquetas a 4 para evitar prompts muy largos
+        labels = [str(o).strip() for o in options[:4]]
+        labels_text = "; ".join(f"{chr(65+i)}: {lab}" for i, lab in enumerate(labels))
+        p = (
+            f"Genera una imagen técnica que ayude a razonar sobre la siguiente pregunta del tema '{topic}': {qtxt}. "
+            f"Incluye una visualización (por ejemplo gráfico de barras o esquema comparativo) con las etiquetas: {labels_text}. "
+            "Usa valores de ejemplo plausibles para ilustrar diferencias entre las opciones, pero no marques cuál es la correcta. "
+            "Asegúrate de que la imagen represente los elementos mencionados en las etiquetas y permita inferir una respuesta. "
+            + base_instructions
+        )
+        return p
+
+    # Detectar si la pregunta pide un proceso/algoritmo
+    if any(kw in ql for kw in process_keywords):
+        p = (
+            f"Genera un diagrama de flujo/diagrama de proceso claro y esquemático para el tema '{topic}' "
+            f"que ilustre los pasos necesarios para: {qtxt}. "
+            "Incluye flechas, bloques numerados y etiquetas cortas para cada paso. "
+            + base_instructions
+        )
+        return p
+
+    # Detectar si la pregunta sugiere datos o comparación
+    if any(kw in ql for kw in chart_keywords) or qtxt.strip().endswith("?") and ("cuál" in ql or "qué" in ql and "más" in ql):
+        p = (
+            f"Genera un gráfico técnico (elige entre barras/lineas/pastel según corresponda) sobre '{topic}' "
+            f"que represente los datos necesarios para plantear: {qtxt}. "
+            "Incluye ejes etiquetados, leyenda y escala, sin texto explicativo extra. "
+            + base_instructions
+        )
+        return p
+
+    # Prompt genérico para esquemas/diagramas que acompañen preguntas educativas
+    p = (
+        f"Genera un esquema técnico, diagrama o infográfico mínimo para el tema '{topic}' "
+        f"que ayude a formular la pregunta: {qtxt}. Prioriza claridad, etiquetas y elementos que permitan "
+        "hacer preguntas basadas en la imagen. Si procede, representa relaciones entre conceptos clave mencionados en el enunciado. "
+        + base_instructions
+    )
+    return p
+
+
 # ---------------------------
 # Proveedor y fallback
 # ---------------------------
@@ -1049,12 +1133,14 @@ def _is_no_credits_msg(msg: str) -> bool:
 @api_view(['POST'])
 def sessions(request):
     data = request.data
-    logger.info(f"[Sessions] Creando sesión con datos: topic={data.get('topic')}, difficulty={data.get('difficulty')}, types={data.get('types')}, counts={data.get('counts')}")
+    print(data)
+    # logger.info(f"[Sessions] Creando sesión con datos: topic={data.get('topic')}, difficulty={data.get('difficulty')}, types={data.get('types')}, counts={data.get('counts')}")
     
     topic = data.get('topic', '')
     difficulty = _normalize_difficulty(data.get('difficulty', ''))
     types = data.get('types', [])  # ["mcq","vf"]
     counts = data.get('counts', {})
+    image_counts = data.get('image_counts', {})
 
     if not topic:
         logger.warning("[Sessions] Error: topic requerido pero no proporcionado")
@@ -1098,9 +1184,10 @@ def sessions(request):
             category=cat,
             difficulty=difficulty,
             types=types,
-            counts=counts
+            counts=counts,
+            image_counts=image_counts
         )
-        logger.info(f"[Sessions] Sesión creada exitosamente: {session.id}")
+        # logger.info(f"[Sessions] Sesión creada exitosamente: {session.id}")
     except Exception as e:
         logger.error(f"[Sessions] Error al crear sesión: {str(e)}", exc_info=True)
         capture_exception(e)
@@ -1114,7 +1201,7 @@ def sessions(request):
     prompt_for_image = f"{topic} - {difficulty} quiz cover"
 
     try:
-        logger.info(f"[Sessions] Intentando generar imagen de portada para sesión {session.id}")
+        # logger.info(f"[Sessions] Intentando generar imagen de portada para sesión {session.id}")
         
         # ⬇️ importante: pedir también el proveedor realmente usado
         result = generate_cover_image(
@@ -1133,7 +1220,7 @@ def sessions(request):
         if img_rel:
             session.cover_image = img_rel
             session.save(update_fields=['cover_image'])
-            logger.info(f"[Sessions] Imagen de portada generada y guardada: {img_rel}")
+            # logger.info(f"[Sessions] Imagen de portada generada y guardada: {img_rel}")
 
             # 🔹 Registrar consumo de crédito en ImageGenerationLog
             user, user_identifier = _user_and_identifier(request)
@@ -1204,11 +1291,13 @@ def preview_questions(request):
         difficulty = session.difficulty
         types = session.types
         counts = session.counts
+        image_counts = getattr(session, 'image_counts', {}) or {}
     else:
         topic = data.get('topic','Tema de ejemplo')
         difficulty = _normalize_difficulty(data.get('difficulty','Fácil'))
         types = data.get('types',['mcq','vf'])
         counts = data.get('counts', {t:1 for t in types})
+        image_counts = data.get('image_counts', {})
 
     types = list(dict.fromkeys(types))
     debug = request.GET.get('debug') == '1'
@@ -1270,20 +1359,172 @@ def preview_questions(request):
 
         generated = clean
 
+        # Post-procesamiento: garantizar que los MCQ tengan opciones válidas.
+        # Si aparecen placeholders como "Opción 1" o faltan opciones, intentamos regenerar
+        # la pregunta específica hasta 2 veces usando el mismo fallback/provider.
+        for qi, q in enumerate(generated):
+            try:
+                if (q.get("type") or "").lower() != "mcq":
+                    continue
+                opts = q.get("options") or []
+                if not _mcq_has_issues(opts):
+                    continue
+
+                # Intentar regenerar hasta 2 veces
+                regen_ok = False
+                for attempt in range(2):
+                    try:
+                        new_q, p_used, did_fb, errs = _regenerate_with_fallback(
+                            topic, difficulty, "mcq", q, seen, provider_used
+                        )
+                        new_opts = new_q.get("options") or []
+                        if not _mcq_has_issues(new_opts):
+                            generated[qi] = new_q
+                            regen_ok = True
+                            break
+                        else:
+                            # actualizar seen para evitar repetición exacta
+                            seen.add(_norm_for_cmp(new_q.get("question","")))
+                    except Exception:
+                        # seguir intentando
+                        continue
+
+                if not regen_ok:
+                    # Como último recurso, construir opciones legibles (sin prefijos "Opción N")
+                    fallback_opts = [
+                        "Definición correcta",
+                        "Distractor plausible 1",
+                        "Distractor plausible 2",
+                        "Distractor plausible 3",
+                    ]
+                    qclean = dict(q)
+                    qclean["options"] = fallback_opts
+                    qclean["answer"] = "A"
+                    generated[qi] = qclean
+            except Exception:
+                # No dejar que un fallo en la reparación rompa todo el preview
+                logger.exception("[Preview] Error al reparar MCQ inválida")
+
         if session:
+            # Añadir campo 'descripcion_imagen' a cada pregunta generado para describir la imagen deseada
+            for qi, qq in enumerate(generated):
+                try:
+                    if isinstance(qq, dict):
+                        if not qq.get('descripcion_imagen'):
+                            qq['descripcion_imagen'] = _build_image_prompt(topic, qq)
+                    else:
+                        # Normalizar a dict si viene en otro formato
+                        generated[qi] = {
+                            'question': str(qq),
+                            'type': 'short',
+                            'answer': '',
+                            'descripcion_imagen': _build_image_prompt(topic, str(qq))
+                        }
+                except Exception:
+                    try:
+                        generated[qi] = generated[qi] if isinstance(generated[qi], dict) else {'question': str(generated[qi])}
+                        generated[qi]['descripcion_imagen'] = _build_image_prompt(topic, generated[qi])
+                    except Exception:
+                        # no dejar que un fallo en la descripción rompa el flujo
+                        pass
+
             session.latest_preview = generated
-            session.save(update_fields=["latest_preview"])
+            # Antes de persistir, generar imágenes para las preguntas según image_counts
+            try:
+                # Normalizar image_counts
+                need = {t: int(image_counts.get(t, 0) or 0) for t in types}
+                total_needed = sum(v for v in need.values() if v > 0)
+                if total_needed > 0:
+                    user, user_identifier = _user_and_identifier(request)
+                    # comprobar límite y generar por cada pregunta que corresponda
+                    for idx, q in enumerate(generated):
+                        qtype = (q.get('type') or '').lower()
+                        if need.get(qtype, 0) <= 0:
+                            continue
+
+                        # construir prompt para imagen basada en la pregunta (menos artístico, más técnico)
+                        # Usar la descripción precomputada si existe, si no, generar a partir de la pregunta
+                        prompt_for_img = q.get('descripcion_imagen') or _build_image_prompt(topic, q)
+
+                        # reutilizar cache si existe
+                        try:
+                            cached = _get_cached_image(user_identifier, prompt_for_img)
+                        except Exception:
+                            cached = None
+
+                        img_rel = None
+                        provider_used = None
+                        try:
+                            if cached:
+                                img_rel = cached.image_path
+                                provider_used = 'cache'
+                            else:
+                                # comprobar límite por proveedor real
+                                status_info = _image_rate_limit_status(user_identifier, _header_provider(request))
+                                if status_info.get('remaining', IMAGE_DAILY_LIMIT) <= 0:
+                                    # saltar generación si no hay crédito
+                                    logger.warning(f"[Preview] Límite de imágenes alcanzado para {user_identifier}; saltando generación de imagen para pregunta {idx}")
+                                    continue
+
+                                result = generate_cover_image(
+                                    prompt_for_img,
+                                    preferred_provider=_header_provider(request),
+                                    size=1024,
+                                    timeout_secs=10,
+                                    return_provider=True,
+                                )
+                                if isinstance(result, tuple):
+                                    img_rel, provider_used = result
+                                else:
+                                    img_rel, provider_used = result, _header_provider(request)
+
+                                # cachear y registrar uso
+                                try:
+                                    _save_cache_entry(user, user_identifier, prompt_for_img, img_rel)
+                                except Exception:
+                                    pass
+                                try:
+                                    _log_image_usage(
+                                        user=user,
+                                        user_identifier=user_identifier,
+                                        prompt=prompt_for_img,
+                                        provider=provider_used or _header_provider(request),
+                                        image_path=img_rel,
+                                        reused_from_cache=False,
+                                    )
+                                except Exception:
+                                    pass
+
+                        except Exception as e:
+                            logger.warning(f"[Preview] No se pudo generar imagen para pregunta {idx}: {e}")
+                            img_rel = None
+
+                        if img_rel:
+                            try:
+                                q['image_rel'] = img_rel
+                                q['image'] = request.build_absolute_uri(f"/api/media/proxy/{img_rel}")
+                                qtxt = q.get('question','') or ''
+                                if not qtxt.lower().strip().startswith('según'):
+                                    q['question'] = f"Según esta imagen, {qtxt}"
+                                need[qtype] = max(0, need[qtype] - 1)
+                            except Exception:
+                                pass
+                        # continuar hasta cubrir need
+            except Exception as e:
+                logger.warning(f"[Preview] Error al procesar image_counts: {e}")
+
+            session.save(update_fields=["latest_preview", "image_counts"])  
 
             # Si la sesión no tiene imagen de portada persistida, intentar generarla
             try:
                 if not getattr(session, 'cover_image', ''):
-                    logger.info(f"[CoverImage] Intentando generar imagen para sesión {session.id}, tema: {topic}")
+                    # logger.info(f"[CoverImage] Intentando generar imagen para sesión {session.id}, tema: {topic}")
                     prompt_for_image = f"{topic} - {difficulty} quiz cover"
                     img_rel = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=10)
                     if img_rel:
                         session.cover_image = img_rel
                         session.save(update_fields=['cover_image'])
-                        logger.info(f"[CoverImage] Imagen generada exitosamente: {img_rel}")
+                        # logger.info(f"[CoverImage] Imagen generada exitosamente: {img_rel}")
                     else:
                         logger.warning(f"[CoverImage] generate_cover_image retornó None para sesión {session.id}")
             except Exception as e:
@@ -1607,13 +1848,13 @@ def _store_image_bytes(image_bytes: bytes) -> str:
     with open(filepath, 'wb') as fh:
         fh.write(image_bytes)
 
-    logger.info(f"[CoverImage] Imagen guardada exitosamente en {filepath}")
+    # logger.info(f"[CoverImage] Imagen guardada exitosamente en {filepath}")
     return f"generated/{filename}"
 
 
 def _generate_cover_image_with_openai(prompt: str, size: int) -> str:
     client = _configure_openai()
-    logger.info("[CoverImage] Generando imagen con OpenAI")
+    # logger.info("[CoverImage] Generando imagen con OpenAI")
 
     response = client.images.generate(
         model="dall-e-3",
@@ -1681,7 +1922,7 @@ def gemini_generate_image(request):
     user, user_identifier = _user_and_identifier(request)
     cached = _get_cached_image(user_identifier, prompt)
     if cached:
-        logger.info(f"[CoverImage] Devolviendo imagen cacheada para {user_identifier}")
+        # logger.info(f"[CoverImage] Devolviendo imagen cacheada para {user_identifier}")
         _log_image_usage(
             user=user,
             user_identifier=user_identifier,

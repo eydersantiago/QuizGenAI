@@ -175,6 +175,7 @@ export default function QuizForm(props) {
   const [difficulty, setDifficulty] = useState("Fácil");
   const [types, setTypes] = useState({ mcq: true, vf: true, short: false });
   const [counts, setCounts] = useState({ mcq: 5, vf: 3, short: 0 });
+  const [imageCounts, setImageCounts] = useState({ mcq: 0, vf: 0 });
   const [preview, setPreview] = useState(null);
   const [coverImage, setCoverImage] = useState(null);
   const [coverRegenerationCount, setCoverRegenerationCount] = useState(null);
@@ -212,6 +213,7 @@ export default function QuizForm(props) {
         if (parsed.difficulty) setDifficulty(parsed.difficulty);
         if (parsed.types) setTypes(parsed.types);
         if (parsed.counts) setCounts(parsed.counts);
+        if (parsed.imageCounts) setImageCounts(parsed.imageCounts);
         if (parsed.timestamp) {
           setLastSaved(new Date(parsed.timestamp));
         }
@@ -358,6 +360,7 @@ useEffect(() => {
       difficulty,
       types,
       counts,
+      imageCounts,
       timestamp: new Date().toISOString(),
     };
 
@@ -368,7 +371,7 @@ useEffect(() => {
     setTimeout(() => {
       setIsAutoSaving(false);
     }, 500);
-  }, [topic, difficulty, types, counts]);
+  }, [topic, difficulty, types, counts, imageCounts]);
 
   // Auto-guardar cuando cambian los datos (con debounce)
   useEffect(() => {
@@ -386,6 +389,7 @@ useEffect(() => {
   const clearSavedData = useCallback(() => {
     localStorage.removeItem(AUTOSAVE_KEY);
     setLastSaved(null);
+    setImageCounts({ mcq: 0, vf: 0 });
   }, []);
 
   function toggleType(t) {
@@ -393,7 +397,15 @@ useEffect(() => {
   }
 
   function handleCountChange(t, v) {
-    setCounts((prev) => ({ ...prev, [t]: Math.max(0, Math.min(20, Number(v))) }));
+    const n = Math.max(0, Math.min(20, Number(v)));
+    setCounts((prev) => ({ ...prev, [t]: n }));
+    // Ensure imageCounts for this type does not exceed the total count
+    setImageCounts((prev) => ({ ...prev, [t]: Math.min(prev[t] || 0, n) }));
+  }
+
+  function handleImageCountChange(t, v) {
+    const n = Math.max(0, Math.min(20, Number(v)));
+    setImageCounts((prev) => ({ ...prev, [t]: n }));
   }
 
   function validate() {
@@ -416,6 +428,14 @@ useEffect(() => {
     if (total > MAX_TOTAL) {
       Swal.fire("Excedido", `Máx ${MAX_TOTAL} preguntas.`, "error");
       return false;
+    }
+
+    // Validar que la cantidad de preguntas con imagen no exceda la cantidad total del tipo
+    for (const k of Object.keys(imageCounts)) {
+      if ((types[k] || false) && (Number(imageCounts[k] || 0) > Number(counts[k] || 0))) {
+        Swal.fire("Imágenes inválidas", `El número de preguntas con imagen para ${k.toUpperCase()} no puede exceder el total de preguntas de ese tipo.`, "warning");
+        return false;
+      }
     }
     return true;
   }
@@ -490,7 +510,7 @@ function updateImageCreditsFromResponse(response, json) {
     // Primero crear una sesión temporal para obtener un sessionId
     try {
       setCreating(true);
-      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts };
+      const payload = { topic, difficulty, types: Object.keys(types).filter((k) => types[k]), counts, image_counts: imageCounts };
 
       // Crear sesión temporal
       const sessionRes = await fetch(
@@ -650,7 +670,13 @@ async function handleCreate() {
         filteredCounts[t] = counts[t];
       }
     });
-    const payload = { topic, difficulty, types: activeTypes, counts: filteredCounts };
+    const filteredImageCounts = {};
+    activeTypes.forEach(t => {
+      if (imageCounts[t] !== undefined) {
+        filteredImageCounts[t] = imageCounts[t];
+      }
+    });
+    const payload = { topic, difficulty, types: activeTypes, counts: filteredCounts, image_counts: filteredImageCounts };
 
     const res = await fetch(
       `${API_BASE}/sessions/`,
@@ -748,6 +774,7 @@ async function handleCreate() {
         difficulty,
         types: Object.keys(types).filter((k) => types[k]),
         counts,
+        image_counts: imageCounts,
         questions: editedQuestions // Enviar las preguntas editadas
       };
 
@@ -813,6 +840,7 @@ async function handleCreate() {
         difficulty,
         types: Object.keys(types).filter((k) => types[k]).join(","),
         counts: JSON.stringify(counts),
+        image_counts: JSON.stringify(imageCounts),
       }).toString();
 
       const res = await fetch(
@@ -870,6 +898,7 @@ async function handleCreate() {
           difficulty, 
           types, 
           counts, 
+          imageCounts,
           coverImage,
           coverRegenerationCount,
           coverRegenerationRemaining,
@@ -1021,6 +1050,20 @@ async function handleCreate() {
               onChange={(e) => handleCountChange(t, e.target.value)}
               className="border-2 border-indigo-200 rounded-xl text-center p-3 focus:ring-2 focus:ring-indigo-500"
             />
+            {/* Si es MCQ o VF, permitir indicar cuántas de esas preguntas deben incluir imagen */}
+            {(t === 'mcq' || t === 'vf') && (
+              <div className="mt-2 flex items-center justify-center gap-2">
+                <label className="text-xs">Imágenes</label>
+                <input
+                  type="number"
+                  min="0"
+                  max={counts[t] || 20}
+                  value={imageCounts[t] || 0}
+                  onChange={(e) => handleImageCountChange(t, e.target.value)}
+                  className="w-20 border-2 border-indigo-100 rounded-xl text-center p-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1104,6 +1147,7 @@ async function handleCreate() {
                   setDifficulty("Fácil");
                   setTypes({ mcq: true, vf: true, short: false });
                   setCounts({ mcq: 5, vf: 3, short: 0 });
+                  setImageCounts({ mcq: 0, vf: 0 });
                   setPreview(null);
                   clearSavedData();
                   Swal.fire("Limpiado", "El formulario ha sido limpiado", "success");
