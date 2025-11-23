@@ -134,13 +134,12 @@ def _log_intent_event(result: Dict[str, Any], request) -> None:
 @api_view(["GET"])
 def intent_health(request):
     """GET /api/intent-router/health/"""
-    # Aquí podrías chequear backends reales (Gemini, Perplexity, etc.)
+    # Aquí podrías chequear backends reales (solo Gemini en uso)
     data = {
         "status": "ok",
         "backends": {
             "grammar": "ok",
             "gemini": "disabled",
-            "perplexity": "disabled",
         },
     }
     return JsonResponse(data, status=status.HTTP_200_OK)

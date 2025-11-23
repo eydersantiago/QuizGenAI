@@ -14,6 +14,7 @@ google-api-python-client==2.183.0
 google-auth==2.40.3
 google-auth-httplib2==0.2.0
 googleapis-common-protos==1.70.0
+openai>=1.59.3
 grpcio==1.75.1
 grpcio-status==1.71.2
 httplib2==0.31.0
@@ -32,7 +33,7 @@ urllib3==2.5.0
 colorama==0.4.6
 uvicorn[standard]==0.30.6
 typing_extensions==4.15.0
-
+sentry-sdk[django]==2.*
 
 #azure speech sdk
 pydub==0.25.1

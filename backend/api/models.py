@@ -60,13 +60,66 @@ class RegenerationLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = "regeneration_log"
+            db_table = "regeneration_log"
+            indexes = [
+                models.Index(
+                    fields=["session", "index"],
+                    name="regen_session_index_idx",
+                ),
+            ]
+
+
+class ImagePromptCache(models.Model):
+    """Cache de imágenes generadas para prompts recientes."""
+
+    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="prompt_caches")
+    user_identifier = models.CharField(max_length=255, db_index=True)
+    prompt = models.TextField()
+    prompt_hash = models.CharField(max_length=64, db_index=True)
+    image_path = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+            db_table = "image_prompt_cache"
+            indexes = [
+                models.Index(
+                    fields=["user_identifier", "prompt_hash", "expires_at"],
+                    name="img_cache_user_prompt_exp_idx",
+                ),
+            ]
+            unique_together = ("user_identifier", "prompt_hash")
+
+    def __str__(self):
+        return f"cache[{self.user_identifier}] {self.prompt[:30]}..."
+
+    def is_valid(self):
+        return self.expires_at >= timezone.now()
+
+
+class ImageGenerationLog(models.Model):
+    """Registro histórico de generación y reutilización de imágenes."""
+
+    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="image_generations")
+    user_identifier = models.CharField(max_length=255, db_index=True)
+    prompt = models.TextField()
+    provider = models.CharField(max_length=50, default="unknown")
+    image_path = models.CharField(max_length=500, blank=True, default="")
+    reused_from_cache = models.BooleanField(default=False)
+    estimated_cost_usd = models.DecimalField(max_digits=8, decimal_places=4, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "image_generation_log"
         indexes = [
-            models.Index(fields=["session", "index"]),
+            models.Index(fields=["user_identifier", "created_at"]),
+            models.Index(fields=["provider", "created_at"]),
+            models.Index(fields=["reused_from_cache", "created_at"]),
         ]
 
     def __str__(self):
-        return f"regen[{self.session_id}] idx={self.index} at {self.created_at}"
+        source = "cache" if self.reused_from_cache else "generated"
+        return f"{self.user_identifier} - {source} at {self.created_at}"
 
 
 class SavedQuiz(models.Model):
