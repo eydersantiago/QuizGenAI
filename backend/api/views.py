@@ -32,7 +32,7 @@ from .models import ImageAsset
 
 load_dotenv()
 
-IMAGE_DAILY_LIMIT = 10000000000
+IMAGE_DAILY_LIMIT = 10
 
 
 def _user_and_identifier(request):
