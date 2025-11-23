@@ -339,3 +339,48 @@ class VoiceMetricEvent(models.Model):
 
     def __str__(self):
         return f"{self.event_type} - {self.timestamp} - User {self.user_id}"
+
+
+# Helper to store images under <session_id>/imagenes/<filename>
+def upload_to_session_imagenes(instance, filename):
+    session_id = None
+    # Prefer a GenerationSession relation if present
+    try:
+        if hasattr(instance, 'session') and instance.session:
+            session_id = getattr(instance.session, 'id', None)
+    except Exception:
+        session_id = None
+    # Fallback to session_id attribute
+    if not session_id:
+        session_id = getattr(instance, 'session_id', None)
+    if not session_id:
+        session_id = 'no-session'
+    # Convert to string (UUID may be UUID object)
+    return f"{str(session_id)}/imagenes/{filename}"
+
+
+class GeneratedImage(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    session = models.ForeignKey(GenerationSession, on_delete=models.CASCADE, null=True, blank=True, related_name='generated_images')
+    # Allow null user for images generated without an authenticated user (e.g., background jobs)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    # Preserve DB column name used in migration (`image_rel`) while exposing an ImageField
+    image_rel = models.ImageField(upload_to=upload_to_session_imagenes, db_column='image_rel', max_length=255, blank=True, help_text="Ruta relativa dentro de MEDIA_ROOT")
+    # Kind: 'cover' (portada) or 'question' (imagen asociada a una pregunta)
+    KIND_CHOICES = (
+        ("cover", "cover"),
+        ("question", "question"),
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default="question", db_index=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'generated_image'
+        indexes = [
+            models.Index(fields=['user', 'created'], name='api_gene_user_created'),
+            models.Index(fields=['image_rel'], name='api_gene_image_rel'),
+            models.Index(fields=['session'], name='api_gene_session_idx'),
+        ]
+
+    def __str__(self):
+        return f"GeneratedImage {self.id} - session {getattr(self.session,'id',None)}"

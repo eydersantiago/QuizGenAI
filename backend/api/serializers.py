@@ -1,6 +1,6 @@
 # api/serializers.py
 from rest_framework import serializers
-from .models import SavedQuiz, GenerationSession
+from .models import SavedQuiz, GenerationSession, GeneratedImage
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 import re
@@ -822,3 +822,49 @@ def validate_edited_questions_batch(questions_list):
 
     is_valid = len(errors) == 0
     return is_valid, errors, sanitized_questions
+
+
+class GeneratedImageSerializer(serializers.ModelSerializer):
+
+    # Represent session as a small object so frontend can show topic without extra requests
+    session = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GeneratedImage
+        fields = ['id', 'session', 'user', 'kind', 'image_url', 'created']
+
+    def get_image_url(self, obj):
+        # `image_rel` may be an ImageFieldFile instance (not a plain string).
+        raw = getattr(obj, 'image_rel', '') or ''
+        if hasattr(raw, 'name'):
+            v = (raw.name or '').strip()
+        else:
+            v = (str(raw) or '').strip()
+
+        if not v:
+            return ''
+        if v.startswith('http://') or v.startswith('https://'):
+            return v
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        if req:
+            try:
+                return req.build_absolute_uri(f"/api/media/proxy/{v.lstrip('/')}")
+            except Exception:
+                pass
+
+        media_url = (getattr(settings, 'MEDIA_URL', '/') or '/')
+        if not media_url.endswith('/'):
+            media_url = media_url + '/'
+        if v.startswith('/'):
+            v = v.lstrip('/')
+        return f"{media_url}{v}"
+
+    def get_session(self, obj):
+        s = getattr(obj, 'session', None)
+        if not s:
+            return None
+        try:
+            return {'id': str(s.id), 'topic': s.topic}
+        except Exception:
+            return {'id': str(getattr(s, 'id', '')), 'topic': ''}

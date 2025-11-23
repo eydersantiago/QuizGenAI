@@ -70,6 +70,7 @@ urlpatterns = [
 
     path("gemini-generate/", views.gemini_generate, name="gemini_generate"),  # opcional: tu prueba libre
     path("gemini-image/", views.gemini_generate_image, name="gemini_generate_image"),
+    path("generated-images/", views.generated_images_list, name="generated_images_list"),
     path("hint/", view_hint.hint_view, name="hint"),
     path("ffmpeg-debug/", ffmpeg_debug, name="ffmpeg_debug"),
     # Proxy para servir archivos de MEDIA_ROOT de forma controlada (dev/debug)

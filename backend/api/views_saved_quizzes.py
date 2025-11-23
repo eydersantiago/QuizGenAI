@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.db.models import Q, Count, Avg
 from django.db import transaction
 
-from .models import SavedQuiz, GenerationSession
+from .models import SavedQuiz, GenerationSession, GeneratedImage
 from .serializers import (
     SavedQuizSerializer,
     SavedQuizListSerializer,
@@ -121,6 +121,16 @@ def saved_quizzes(request):
                         try:
                             session.cover_image = img_rel
                             session.save(update_fields=['cover_image'])
+                            # Registrar en DB la imagen de portada
+                            try:
+                                GeneratedImage.objects.create(
+                                    session=session,
+                                    user=(request.user if getattr(request, 'user', None) and request.user.is_authenticated else None),
+                                    image_rel=img_rel,
+                                    kind='cover'
+                                )
+                            except Exception:
+                                pass
                         except Exception:
                             pass
                         cover_image_rel = img_rel

@@ -6,6 +6,7 @@ import { getSlot } from './utils/voiceParsing';
 import QuizForm from "./components/QuizForm";
 import QuizPlay from "./pages/QuizPlay";
 import AdminMetrics from "./pages/AdminMetrics";
+import Gallery from "./pages/Gallery";
 import SavedQuizzes from "./components/SavedQuizzes";
 import MicTest from "./pages/MicTest";
 import { v4 as uuidv4 } from "uuid";
@@ -113,6 +114,7 @@ function App() {
               >
                 🎤 Panel de voz
               </Link>
+                <Link to="/gallery" className="btn-voice-link">🖼️ Galería</Link>
               <ModelProviderSelect compact />
             </div>
           )}
@@ -134,10 +136,12 @@ function App() {
                 >
                   🎤 Panel de voz
                 </Link>
+                <Link to="/gallery" className="btn-voice-link">🖼️ Galería</Link>
                 <ModelProviderSelect compact />
               </div>
 
               <Routes>
+                <Route path="/gallery" element={<Gallery />} />
                 <Route path="/" element={<QuizForm />} />
                 <Route path="/mic-test" element={<MicTest />} />
                 <Route path="/settings/audio-privacy" element={<AudioPrivacySettings />} />
@@ -154,6 +158,7 @@ function App() {
             </section>
           ) : (
             <Routes>
+              <Route path="/gallery" element={<Gallery />} />
               <Route path="/quiz/:sessionId" element={<QuizPlay />} />
               <Route path="/saved-quizzes" element={<SavedQuizzes />} />
               <Route path="/admin/metrics" element={<AdminMetrics />} />

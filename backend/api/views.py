@@ -18,7 +18,8 @@ from django.http import Http404
 
 
 #import google.generativeai as genai
-from .models import GenerationSession, RegenerationLog
+from .models import GenerationSession, RegenerationLog, GeneratedImage
+from .serializers import GeneratedImageSerializer
 
 load_dotenv()
 
@@ -785,6 +786,16 @@ def sessions(request):
         if img_rel:
             session.cover_image = img_rel
             session.save(update_fields=['cover_image'])
+            # Registrar en BD la imagen de portada
+            try:
+                GeneratedImage.objects.create(
+                    session=session,
+                    user=(request.user if getattr(request, 'user', None) and request.user.is_authenticated else None),
+                    image_rel=img_rel,
+                    kind='cover'
+                )
+            except Exception:
+                pass
     except Exception:
         # No bloquear la creación de la sesión por fallo en generación de imagen
         pass
@@ -900,6 +911,16 @@ def preview_questions(request):
                     if img_rel:
                         session.cover_image = img_rel
                         session.save(update_fields=['cover_image'])
+                        # Registrar en BD la imagen de portada
+                        try:
+                            GeneratedImage.objects.create(
+                                session=session,
+                                user=(request.user if getattr(request, 'user', None) and request.user.is_authenticated else None),
+                                image_rel=img_rel,
+                                kind='cover'
+                            )
+                        except Exception:
+                            pass
             except Exception:
                 # No bloquear el preview si falla la generación de la imagen
                 pass
@@ -1290,6 +1311,16 @@ def attach_images_to_questions(topic, image_counts, questions, session=None, req
             if not filepath_rel:
                 continue
             q['image_rel'] = filepath_rel
+            # Registrar en BD la imagen asociada a la pregunta
+            try:
+                GeneratedImage.objects.create(
+                    session=(session if session is not None else None),
+                    user=(request.user if getattr(request, 'user', None) and request.user.is_authenticated else None),
+                    image_rel=filepath_rel,
+                    kind='question'
+                )
+            except Exception:
+                pass
             if request:
                 try:
                     q['image_url'] = request.build_absolute_uri(f"/api/media/proxy/{filepath_rel}")
@@ -1406,6 +1437,16 @@ def gemini_generate_image(request):
                 if not getattr(ss, 'cover_image', ''):
                     ss.cover_image = filepath_rel
                     ss.save(update_fields=['cover_image'])
+                    # Registrar en BD la imagen de portada asociada a la sesión
+                    try:
+                        GeneratedImage.objects.create(
+                            session=ss,
+                            user=(request.user if getattr(request, 'user', None) and request.user.is_authenticated else None),
+                            image_rel=filepath_rel,
+                            kind='cover'
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 # No bloquear la entrega de la imagen por fallo al persistir
                 pass
@@ -1502,5 +1543,88 @@ def update_session_preview(request, session_id):
         'ok': True,
         'session_id': str(session.id),
         'cover_image': (request.build_absolute_uri(f"/api/media/proxy/{session.cover_image}") if getattr(session, 'cover_image', '') else '')
+    }
+    return JsonResponse(resp, status=200)
+
+
+@api_view(['GET'])
+def generated_images_list(request):
+    """
+    GET /api/generated-images/?session_id=&topic=&user_id=&date_from=&date_to=
+    Lista imágenes generadas con filtros simples:
+    - session_id: UUID de GenerationSession
+    - topic: búsqueda por topic de la sesión (icontains)
+    - user_id: id numérico del usuario
+    - date_from / date_to: ISO date (YYYY-MM-DD) filtro por created
+    """
+    qs = GeneratedImage.objects.select_related('session', 'user').all()
+
+    # Filters
+    session_id = request.GET.get('session_id')
+    topic = request.GET.get('topic')
+    user_id = request.GET.get('user_id')
+    kind = request.GET.get('kind')  # 'cover' | 'question'
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+
+    if session_id:
+        qs = qs.filter(session__id=session_id)
+    if topic:
+        qs = qs.filter(session__topic__icontains=topic)
+    # If user_id provided, filter by it; otherwise, default to authenticated user for privacy
+    if user_id:
+        try:
+            qs = qs.filter(user__id=int(user_id))
+        except Exception:
+            pass
+    else:
+        if getattr(request, 'user', None) and request.user.is_authenticated:
+            qs = qs.filter(user=request.user)
+
+    if kind:
+        qs = qs.filter(kind=kind)
+
+    # Filtrado por rango de fechas (YYYY-MM-DD)
+    try:
+        from django.utils.dateparse import parse_date
+        if date_from:
+            d1 = parse_date(date_from)
+            if d1:
+                qs = qs.filter(created__date__gte=d1)
+        if date_to:
+            d2 = parse_date(date_to)
+            if d2:
+                qs = qs.filter(created__date__lte=d2)
+    except Exception:
+        pass
+
+    # Ordering and pagination
+    order = request.GET.get('order', '-created')
+    qs = qs.order_by(order)
+
+    # Simple pagination
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except Exception:
+        page = 1
+    try:
+        page_size = min(100, max(1, int(request.GET.get('page_size', 20))))
+    except Exception:
+        page_size = 20
+
+    from django.core.paginator import Paginator, EmptyPage
+    paginator = Paginator(qs, page_size)
+    try:
+        page_obj = paginator.page(page)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+
+    serializer = GeneratedImageSerializer(page_obj.object_list, many=True, context={'request': request})
+    resp = {
+        'images': serializer.data,
+        'count': paginator.count,
+        'page': page,
+        'page_size': page_size,
+        'total_pages': paginator.num_pages,
     }
     return JsonResponse(resp, status=200)
