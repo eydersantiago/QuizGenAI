@@ -127,7 +127,8 @@ export default function SavedQuizzes() {
               is_completed: savedQuiz.is_completed,
               topic: savedQuiz.topic,
               difficulty: savedQuiz.difficulty,
-              favorite_questions: savedQuiz.favorite_questions || []
+              favorite_questions: savedQuiz.favorite_questions || [],
+              cover_image: savedQuiz.cover_image || null
             }
           }
         });

@@ -751,7 +751,7 @@ async function handleCreate() {
           const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/update-preview/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ latest_preview: editedQuestions })
+            body: JSON.stringify({ latest_preview: editedQuestions, cover_image: coverImage })
           });
           const json = await res.json();
           if (!res.ok) {
@@ -775,7 +775,8 @@ async function handleCreate() {
         types: Object.keys(types).filter((k) => types[k]),
         counts,
         image_counts: imageCounts,
-        questions: editedQuestions // Enviar las preguntas editadas
+        questions: editedQuestions,
+        cover_image: coverImage 
       };
 
       const res = await fetch(
