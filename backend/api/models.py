@@ -142,6 +142,7 @@ class ImageAsset(models.Model):
     image_type = models.CharField(max_length=20, choices=IMAGE_TYPE_CHOICES, default="other")
     name = models.CharField(max_length=255, blank=True, default="")
     image_path = models.CharField(max_length=500)
+    descripcion = models.TextField(blank=True, default="", help_text="Descripción/prompt usado para generar la imagen")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
