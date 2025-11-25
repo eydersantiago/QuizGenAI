@@ -2,9 +2,10 @@
 from pathlib import Path
 import os
 import sys
+import logging
+
 from dotenv import load_dotenv
 import dj_database_url
-import logging 
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -38,6 +39,7 @@ CORS_ALLOWED_ORIGINS = csv_env(
     "CORS_ALLOWED_ORIGINS",
     "https://quiz-gen-ai-three.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
 )
+
 # Acepta cualquier subdominio *.vercel.app adicional si lo necesitas
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.vercel\.app$"
@@ -94,6 +96,7 @@ TEMPLATES = [
     },
 ]
 
+# --- Logging básico a consola (útil en Azure /logs) ---
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -108,12 +111,13 @@ LOGGING = {
     },
 }
 
+# --- Sentry ---
 SENTRY_DSN = os.getenv("SENTRY_DSN", "")
 
 if SENTRY_DSN:
     sentry_logging = LoggingIntegration(
-        level=logging.INFO,      # Nivel que se captura en breadcrumbs
-        event_level=logging.ERROR,  # Nivel que se envía como evento a Sentry
+        level=logging.INFO,           # breadcrumbs
+        event_level=logging.ERROR,    # eventos enviados a Sentry
     )
 
     sentry_sdk.init(
@@ -122,31 +126,32 @@ if SENTRY_DSN:
             DjangoIntegration(),
             sentry_logging,
         ],
-        # 0.0 = sin traces, subes a 0.1 / 0.2 si quieres perf más adelante
         traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
-        send_default_pii=False,  # True si quieres asociar usuarios autenticados
+        send_default_pii=False,
         environment=os.getenv("SENTRY_ENV", "local"),
         release=os.getenv("SENTRY_RELEASE", "quizgenai@dev"),
     )
-
-
 
 WSGI_APPLICATION = "backend.wsgi.application"
 ASGI_APPLICATION = "backend.asgi.application"
 
 # --- Base de datos ---
-# Evita pasar sslmode a SQLite (causa TypeError en sqlite3.connect)
-_db_url = os.getenv("DATABASE_URL")
+# Versión combinada:
+# - En Azure: usa DATABASE_URL (Postgres) con ssl_require=True.
+# - En local: si no hay DATABASE_URL, usa sqlite3 sin ssl (evita TypeError).
+_db_url = os.getenv("DATABASE_URL", "").strip()
+
 if _db_url:
-    _is_postgres = _db_url.startswith("postgres://") or _db_url.startswith("postgresql://")
+    is_postgres = _db_url.startswith("postgres://") or _db_url.startswith("postgresql://")
     DATABASES = {
         "default": dj_database_url.parse(
             _db_url,
             conn_max_age=600,
-            ssl_require=_is_postgres,
+            ssl_require=is_postgres,
         )
     }
 else:
+    # Fallback local por defecto (sqlite)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -172,7 +177,9 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STORAGES = {
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"}
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    }
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -180,18 +187,17 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # --- Seguridad detrás de proxy de Azure ---
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-# --- Media (uploads) ---
-# Directorio donde guardamos archivos generados/medias (ej: generated/)
+# --- Media (uploads / generated) ---
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 
 if not DEBUG:
-    # Endurecer en producción
-    #SECURE_SSL_REDIRECT = True
+    # Endurecer en producción (Azure)
+    SECURE_SSL_REDIRECT = True       # como en la versión (1)
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_SECURE = True
     USE_X_FORWARDED_HOST = True
-    # HSTS (opcional, actívalo cuando todo sirva por HTTPS estable)
+    # HSTS (actívalo cuando tengas HTTPS estable y verificado)
     # SECURE_HSTS_SECONDS = 31536000
     # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     # SECURE_HSTS_PRELOAD = True
