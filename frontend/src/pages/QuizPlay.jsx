@@ -127,13 +127,61 @@ async function fetchHintClient(questionPayload) {
 
 
 
+// Convierte una URL de imagen en un dataURL para incrustarla en el PDF
+const fetchImageAsDataURL = async (imageUrl) => {
+  if (!imageUrl) return null;
+  if (imageUrl.startsWith("data:")) return imageUrl;
+
+  try {
+    const response = await fetch(imageUrl, { mode: "cors" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const blob = await response.blob();
+
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (error) {
+    console.warn("No se pudo cargar la imagen para el PDF", imageUrl, error);
+    return null;
+  }
+};
+
 // Función para exportar a PDF
-const exportToPDF = (questions, answers, submitted) => {
+const exportToPDF = async (questions, answers, submitted, coverImageUrl) => {
   const pdf = new jsPDF();
   const margin = 20;
   let yPosition = margin;
-  const pageHeight = pdf.internal.pageSize.height;
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const pageWidth = pdf.internal.pageSize.getWidth();
   const lineHeight = 8;
+
+  const addImageToPDF = async (imageUrl) => {
+    try {
+      const dataUrl = await fetchImageAsDataURL(imageUrl);
+      if (!dataUrl) return;
+
+      const formatMatch = dataUrl.match(/^data:image\/(\w+);/i);
+      const imgFormat = formatMatch ? formatMatch[1].toUpperCase() : "PNG";
+      const { width: imgWidth, height: imgHeight } = pdf.getImageProperties(dataUrl);
+      const maxWidth = pageWidth - margin * 2;
+      const renderWidth = Math.min(maxWidth, imgWidth);
+      const renderHeight = renderWidth * (imgHeight / imgWidth);
+
+      if (yPosition + renderHeight > pageHeight - margin) {
+        pdf.addPage();
+        yPosition = margin;
+      }
+
+      pdf.addImage(dataUrl, imgFormat, margin, yPosition, renderWidth, renderHeight);
+      yPosition += renderHeight + lineHeight;
+    } catch (error) {
+      console.warn("No se pudo incrustar la imagen en el PDF", imageUrl, error);
+    }
+  };
 
   // Configurar fuente
   pdf.setFont("helvetica", "bold");
@@ -146,7 +194,14 @@ const exportToPDF = (questions, answers, submitted) => {
   pdf.text(`Fecha: ${new Date().toLocaleDateString()}`, margin, yPosition);
   yPosition += lineHeight * 2;
 
-  questions.forEach((question, index) => {
+  if (coverImageUrl) {
+    yPosition += lineHeight * 0.5;
+    await addImageToPDF(coverImageUrl);
+  }
+
+  for (let index = 0; index < questions.length; index++) {
+    const question = questions[index];
+
     // Verificar si necesitamos nueva página
     if (yPosition > pageHeight - 60) {
       pdf.addPage();
@@ -163,6 +218,11 @@ const exportToPDF = (questions, answers, submitted) => {
 
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(10);
+
+    if (question.image) {
+      yPosition += lineHeight * 0.5;
+      await addImageToPDF(question.image);
+    }
 
     // Mostrar opciones si es MCQ
     if (question.type === "mcq" && question.options) {
@@ -228,7 +288,7 @@ const exportToPDF = (questions, answers, submitted) => {
     }
 
     yPosition += lineHeight * 1.5; // Espacio entre preguntas
-  });
+  }
 
   // Guardar el PDF
   pdf.save(`quiz_${new Date().toISOString().split("T")[0]}.pdf`);
@@ -1005,9 +1065,9 @@ export default function QuizPlay(props) {
       }
 
       if (matchesAny(['export', 'exportar', 'exporta', 'descargar', 'guardar', 'bajar'])) {
-        if (text.includes('pdf')) exportToPDF(questions, answers, submitted);
+        if (text.includes('pdf')) exportToPDF(questions, answers, submitted, coverImage);
         else if (text.includes('txt') || text.includes('texto')) exportToTXT(questions, answers, submitted);
-        else exportToPDF(questions, answers, submitted);
+        else exportToPDF(questions, answers, submitted, coverImage);
         try { await speak('Exportado').catch(() => { }); } catch (e) { }
         return;
       }
@@ -1247,14 +1307,14 @@ export default function QuizPlay(props) {
         const idx = getSlot(res, 'index') || getSlot(res, 'count');
         // Si especifica PDF/TXT en la frase, preferirlo
         if (/pdf/.test(text)) {
-          exportToPDF(questions, answers, submitted);
+          exportToPDF(questions, answers, submitted, coverImage);
           try { await speak('Exportado a PDF').catch(() => { }); } catch (e) { }
         } else if (/txt/.test(text) || /texto/.test(text)) {
           exportToTXT(questions, answers, submitted);
           try { await speak('Exportado a TXT').catch(() => { }); } catch (e) { }
         } else {
           // default PDF
-          exportToPDF(questions, answers, submitted);
+          exportToPDF(questions, answers, submitted, coverImage);
           try { await speak('Exportado a PDF').catch(() => { }); } catch (e) { }
         }
         return;
@@ -2720,7 +2780,7 @@ export default function QuizPlay(props) {
         <div className="qp-export-buttons">
           <button
             className="btn btn-export btn-pdf"
-            onClick={() => exportToPDF(questions, answers, submitted)}
+            onClick={() => exportToPDF(questions, answers, submitted, coverImage)}
             title="Exportar quiz a PDF"
           >
             📄 Exportar PDF
