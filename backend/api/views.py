@@ -20,7 +20,11 @@ from django.http import Http404
 from sentry_sdk import capture_exception
 
 
-from api.utils.gemini_keys import get_next_gemini_key, has_any_gemini_key
+from api.utils.gemini_keys import (
+    get_gemini_key_count,
+    get_next_gemini_key,
+    has_any_gemini_key,
+)
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -274,6 +278,24 @@ def _call_with_retry(fn, attempts: int = 3, base_delay: float = 1.0):
     if last_error:
         raise last_error
     raise RuntimeError("unknown_retry_failure")
+
+
+def _call_provider_with_retry(provider: str, fn, base_attempts: int = 3, base_delay: float = 1.0):
+    """Retry helper that respects provider-specific configurations.
+
+    For Gemini, we try at least twice per configured key so we exhaust its
+    credits/rotation before falling back to OpenAI. Other providers keep the
+    default retry policy.
+    """
+    attempts = base_attempts
+    if (provider or "").lower() == "gemini":
+        try:
+            key_count = get_gemini_key_count()
+            attempts = max(base_attempts, max(1, key_count) * 2)
+        except Exception:
+            attempts = base_attempts
+
+    return _call_with_retry(fn, attempts=attempts, base_delay=base_delay)
 
 
 def _normalize_difficulty(diff: str) -> str:
@@ -889,14 +911,14 @@ def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
         fallback_used = idx > 0
         try:
             if provider == "gemini":
-                qs = _call_with_retry(
+                qs = _call_provider_with_retry(
                     lambda: generate_questions_with_gemini(topic, difficulty, types, counts),
-                    attempts=3,
+                    base_attempts=3,
                 )
             else:
-                qs = _call_with_retry(
+                qs = _call_provider_with_retry(
                     lambda: generate_questions_with_openai(topic, difficulty, types, counts),
-                    attempts=3,
+                    base_attempts=3,
                 )
 
             return qs, provider, fallback_used, errors
@@ -926,14 +948,14 @@ def _regenerate_with_fallback(topic, difficulty, qtype, base_q, avoid_phrases, p
         fallback_used = idx > 0
         try:
             if provider == "gemini":
-                q = _call_with_retry(
+                q = _call_provider_with_retry(
                     lambda: regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases),
-                    attempts=3,
+                    base_attempts=3,
                 )
             else:
-                q = _call_with_retry(
+                q = _call_provider_with_retry(
                     lambda: regenerate_question_with_openai(topic, difficulty, qtype, base_q, avoid_phrases),
-                    attempts=3,
+                    base_attempts=3,
                 )
 
             return q, provider, fallback_used, errors
@@ -1309,6 +1331,8 @@ def preview_questions(request):
     debug = request.GET.get('debug') == '1'
 
     preferred = _header_provider(request)
+    user, user_identifier = _user_and_identifier(request)
+    last_image_provider = None
     try:
         generated, provider_used, did_fallback, errors = _generate_with_fallback(
             topic, difficulty, types, counts, preferred
@@ -1466,7 +1490,7 @@ def preview_questions(request):
                                 provider_used = 'cache'
                             else:
                                 # comprobar límite por proveedor real
-                                status_info = _image_rate_limit_status(user_identifier, _header_provider(request))
+                                status_info = _image_rate_limit_status(user_identifier, preferred)
                                 if status_info.get('remaining', IMAGE_DAILY_LIMIT) <= 0:
                                     # saltar generación si no hay crédito
                                     logger.warning(f"[Preview] Límite de imágenes alcanzado para {user_identifier}; saltando generación de imagen para pregunta {idx}")
@@ -1474,7 +1498,7 @@ def preview_questions(request):
 
                                 result = generate_cover_image(
                                     prompt_for_img,
-                                    preferred_provider=_header_provider(request),
+                                    preferred_provider=preferred,
                                     size=1024,
                                     timeout_secs=10,
                                     return_provider=True,
@@ -1482,7 +1506,10 @@ def preview_questions(request):
                                 if isinstance(result, tuple):
                                     img_rel, provider_used = result
                                 else:
-                                    img_rel, provider_used = result, _header_provider(request)
+                                    img_rel, provider_used = result, preferred
+
+                                if provider_used and provider_used != 'cache':
+                                    last_image_provider = provider_used
 
                                 # cachear y registrar uso
                                 try:
@@ -1494,7 +1521,7 @@ def preview_questions(request):
                                         user=user,
                                         user_identifier=user_identifier,
                                         prompt=prompt_for_img,
-                                        provider=provider_used or _header_provider(request),
+                                        provider=provider_used or preferred,
                                         image_path=img_rel,
                                         reused_from_cache=False,
                                     )
@@ -1532,10 +1559,35 @@ def preview_questions(request):
                 if not getattr(session, 'cover_image', ''):
                     # logger.info(f"[CoverImage] Intentando generar imagen para sesión {session.id}, tema: {topic}")
                     prompt_for_image = f"{topic} - {difficulty} quiz cover"
-                    img_rel = generate_cover_image(prompt_for_image, preferred_provider=preferred, size=1024, timeout_secs=10)
+                    result = generate_cover_image(
+                        prompt_for_image,
+                        preferred_provider=preferred,
+                        size=1024,
+                        timeout_secs=10,
+                        return_provider=True,
+                    )
+                    if isinstance(result, tuple):
+                        img_rel, cover_provider = result
+                    else:
+                        img_rel, cover_provider = result, preferred
+
+                    if cover_provider and cover_provider != 'cache':
+                        last_image_provider = cover_provider
+
                     if img_rel:
                         session.cover_image = img_rel
                         session.save(update_fields=['cover_image'])
+                        try:
+                            _log_image_usage(
+                                user=user,
+                                user_identifier=user_identifier,
+                                prompt=prompt_for_image,
+                                provider=cover_provider or preferred,
+                                image_path=img_rel,
+                                reused_from_cache=False,
+                            )
+                        except Exception:
+                            pass
                         # logger.info(f"[CoverImage] Imagen generada exitosamente: {img_rel}")
                     else:
                         logger.warning(f"[CoverImage] generate_cover_image retornó None para sesión {session.id}")
@@ -1549,6 +1601,18 @@ def preview_questions(request):
             'source': provider_used,
             'fallback_used': did_fallback
         }
+
+        try:
+            status_provider = last_image_provider if last_image_provider not in (None, 'cache') else preferred
+            rate_status = _image_rate_limit_status(user_identifier, status_provider)
+            resp['image_rate_limit'] = {
+                'provider': rate_status.get('provider'),
+                'used': rate_status.get('used'),
+                'remaining': rate_status.get('remaining'),
+                'limit': IMAGE_DAILY_LIMIT,
+            }
+        except Exception:
+            pass
         if session and getattr(session, 'cover_image', ''):
             # Devolver URL absoluta vía endpoint proxy para evitar problemas de serving/static
             try:
