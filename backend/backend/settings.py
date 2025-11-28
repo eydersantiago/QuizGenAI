@@ -27,11 +27,13 @@ def csv_env(name, default=""):
 SECRET_KEY = os.getenv("SECRET_KEY", "!!!_dev_only_change_me_!!!")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
+# Permitir todos los hosts (incluye IPs internas 169.254.x.x de Azure)
 ALLOWED_HOSTS = csv_env(
     "ALLOWED_HOSTS",
-    # Azure + dev por defecto
-    ".azurewebsites.net,.scm.azurewebsites.net,localhost,127.0.0.1"
+    "*"
 )
+
+
 
 # --- CORS / CSRF ---
 # Autoriza tu frontend en Vercel (dominio fijo) + dev
