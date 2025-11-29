@@ -894,8 +894,6 @@ Genera 1 pregunta de tipo "{qtype}" sobre "{topic}" en nivel {difficulty}.
 
 
 
-
-
 def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
     """
     Devuelve (questions, provider_used, fallback_used, errors_map).
@@ -912,11 +910,13 @@ def _generate_with_fallback(topic, difficulty, types, counts, preferred: str):
         try:
             if provider == "gemini":
                 qs = _call_provider_with_retry(
+                    provider,
                     lambda: generate_questions_with_gemini(topic, difficulty, types, counts),
                     base_attempts=3,
                 )
             else:
                 qs = _call_provider_with_retry(
+                    provider,
                     lambda: generate_questions_with_openai(topic, difficulty, types, counts),
                     base_attempts=3,
                 )
@@ -949,11 +949,13 @@ def _regenerate_with_fallback(topic, difficulty, qtype, base_q, avoid_phrases, p
         try:
             if provider == "gemini":
                 q = _call_provider_with_retry(
+                    provider,
                     lambda: regenerate_question_with_gemini(topic, difficulty, qtype, base_q, avoid_phrases),
                     base_attempts=3,
                 )
             else:
                 q = _call_provider_with_retry(
+                    provider,
                     lambda: regenerate_question_with_openai(topic, difficulty, qtype, base_q, avoid_phrases),
                     base_attempts=3,
                 )
