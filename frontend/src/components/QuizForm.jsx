@@ -714,7 +714,7 @@ async function handleCreate() {
       const { used, remaining, limit, provider: respProvider } = json.image_rate_limit;
       creditsText =
         `\n\nHoy has usado ${used} ` +
-        `imagen${used === 1 ? "" : "es"} de portada con IA; ` +
+        `créditos de imagen ${used === 1 ? "" : "es"} con IA; ` +
         `te quedan ${remaining} de un total de ${limit} ` +
         `para el proveedor ${respProvider || provider || "auto"}.`;
     }
@@ -947,7 +947,7 @@ async function handleCreate() {
           <p className="mt-1 text-xs sm:text-sm">
             Hoy has usado{" "}
             <strong>{imageCredits.used}</strong>{" "}
-            imagen{imageCredits.used === 1 ? "" : "es"} de portada con IA y te quedan{" "}
+            créditos de imagen{imageCredits.used === 1 ? "" : "es"} con IA y te quedan{" "}
             <strong>{imageCredits.remaining}</strong>{" "}
             de un total de{" "}
             <strong>{imageCredits.limit}</strong>{" "}

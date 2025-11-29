@@ -34,6 +34,6 @@ export function withProviderHeaders(init = {}, provider, headerName = "X-LLM-Pro
 }
 
 export const PROVIDER_LABELS = {
-  openai: "OpenAI [procura no usar en pruebas]",
-  gemini: "Gemini Flash 2.5 [usar en pruebas]",
+  openai: "OpenAI",
+  gemini: "Gemini Flash 2.5 Image",
 };

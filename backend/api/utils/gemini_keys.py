@@ -96,3 +96,15 @@ def get_next_gemini_key() -> str:
 
 def has_any_gemini_key() -> bool:
     return bool(_load_keys())
+
+
+def get_gemini_key_count() -> int:
+    """Return how many Gemini API keys are configured.
+
+    Useful to tune retry/backoff strategies so we exhaust all configured keys
+    before falling back to unpreferred providers.
+    """
+    try:
+        return len(_load_keys())
+    except Exception:
+        return 0
